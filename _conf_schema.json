@@ -12,6 +12,71 @@
     "_special": "select_provider",
     "default": ""
   },
+  "pi_thinking_level": {
+    "type": "string",
+    "description": "Pi 推理强度",
+    "hint": "只控制 Pi 当前任务的 thinking level，不读取 AstrBot Provider 的推理配置。GPT-5.6 等模型支持的档位由 Pi 官方处理。",
+    "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    "default": "medium"
+  },
+  "pi_context_window": {
+    "type": "int",
+    "description": "Pi 上下文窗口",
+    "hint": "留空或填写 0 时不写入 Pi 配置，由 Pi 使用模型默认值。",
+    "default": 0,
+    "slider": {
+      "min": 0,
+      "max": 2000000,
+      "step": 1
+    }
+  },
+  "pi_max_output_tokens": {
+    "type": "int",
+    "description": "Pi 最大输出 token",
+    "hint": "留空或填写 0 时不写入 Pi 配置，由 Pi 使用模型默认值。",
+    "default": 0,
+    "slider": {
+      "min": 0,
+      "max": 1000000,
+      "step": 1
+    }
+  },
+  "pi_input_modalities": {
+    "type": "list",
+    "description": "Pi 输入模态",
+    "hint": "当前支持 text 和 image。Pi 是否能实际处理图片仍取决于所选模型和 Provider。",
+    "default": ["text", "image"]
+  },
+  "pi_temperature": {
+    "type": "float",
+    "description": "Pi temperature",
+    "hint": "留空时不写入 Pi 配置，由 Pi 使用模型默认值。",
+    "default": 0.5
+  },
+  "pi_top_p": {
+    "type": "float",
+    "description": "Pi top-p",
+    "hint": "留空时不写入 Pi 配置，由 Pi 使用模型默认值。",
+    "default": 1.0
+  },
+  "pi_top_k": {
+    "type": "int",
+    "description": "Pi top-k",
+    "hint": "填写 0 表示不写入 Pi 配置。",
+    "default": 0
+  },
+  "pi_min_p": {
+    "type": "float",
+    "description": "Pi min-p",
+    "hint": "留空时不写入 Pi 配置，由 Pi 使用模型默认值。",
+    "default": 0.0
+  },
+  "pi_sampling_params": {
+    "type": "object",
+    "description": "Pi 额外采样参数",
+    "hint": "可选的 JSON 采样参数，按 Pi models.json 的 samplingParams 原样传递；不要填 Provider 专属认证或上下文字段。",
+    "default": {}
+  },
   "pi_session_dir": {
     "type": "string",
     "description": "旧版 /pi 会话线路使用的 Pi 原生会话目录",

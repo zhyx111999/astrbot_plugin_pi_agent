@@ -690,6 +690,16 @@ class PiRpcAdapter:
             {"type": "switch_session", "sessionPath": os.fspath(session_path)}
         )
 
+    async def set_thinking_level(self, level: str) -> dict[str, Any]:
+        """Set Pi's explicit reasoning level for the current session."""
+
+        normalized = str(level or "medium").strip().lower()
+        if normalized not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError(f"unsupported thinking level: {normalized}")
+        return await self._send_and_wait(
+            {"type": "set_thinking_level", "level": normalized}
+        )
+
     async def get_state(self) -> dict[str, Any]:
         response = await self._send_and_wait({"type": "get_state"})
         return response.get("data", response)

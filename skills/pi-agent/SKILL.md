@@ -61,8 +61,10 @@ Read and write permissions are separate:
 
 ## Provider, Context, and Extensions
 
-- All async tasks use the fixed `pi_model` Provider/model selected in the plugin configuration, not the model selected by the current chat.
-- Provider fields configured by AstrBot are mapped to the task-local Pi model configuration. Fields that AstrBot does not configure are omitted so Pi uses its own defaults.
+- All async tasks use the Provider/model binding selected by `pi_model`, not the model selected by the current chat.
+- Pi runtime behavior is controlled by plugin settings: `pi_thinking_level`, `pi_context_window`, `pi_max_output_tokens`, `pi_input_modalities`, `pi_temperature`, `pi_top_p`, `pi_top_k`, `pi_min_p`, and `pi_sampling_params`.
+- The selected AstrBot Provider supplies only the OpenAI-compatible connection, credentials, Provider binding, and model identity. Its reasoning, context, output, modality, sampling, cost, and compatibility fields are not copied automatically.
+- Empty or zero numeric plugin settings are omitted so Pi uses its own defaults.
 - The new task gets the current AstrBot persona, conversation, event, user message, and available media as a creation-time snapshot only.
 - `pi_task_read` reads the corresponding native Pi session JSONL directly. The plugin does not build a second content history, summarize errors, classify progress, or extract results from that session.
 - Follow-ups add only the explicit message supplied by AstrBot; they do not copy the caller's full AstrBot context.

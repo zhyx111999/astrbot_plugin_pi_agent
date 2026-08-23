@@ -384,9 +384,12 @@ class TaskScheduler:
             workspace.mkdir(parents=True, exist_ok=True)
             session_dir = self.session_dir_for(task.task_id)
             session_dir.mkdir(parents=True, exist_ok=True)
+            resolved_worker_config = await self._worker_config_for(
+                task, worker_config
+            )
             adapter_kwargs = await self._adapter_kwargs(
                 task,
-                worker_config=worker_config,
+                worker_config=resolved_worker_config,
                 **{
                     "task_id": task.task_id,
                     "executable": self.resolve_executable(),
@@ -399,6 +402,9 @@ class TaskScheduler:
             )
             adapter = _call_supported(self.adapter_factory, adapter_kwargs)
             await adapter.start()
+            set_thinking = getattr(adapter, "set_thinking_level", None)
+            if callable(set_thinking):
+                await set_thinking(resolved_worker_config.thinking_level)
             state = await adapter.get_state()
             self._adapters[task.task_id] = adapter
             self.registry.update_runtime(
@@ -408,7 +414,6 @@ class TaskScheduler:
                 process_id=_process_id(adapter),
                 workspace=str(workspace),
             )
-            current = self.registry.get_task(task.task_id)
             return adapter
         except asyncio.CancelledError:
             raise
@@ -475,14 +480,15 @@ class TaskScheduler:
             workspace.mkdir(parents=True, exist_ok=True)
             session_dir = self.session_dir_for(task.task_id)
             session_dir.mkdir(parents=True, exist_ok=True)
+            resolved_worker_config = await self._worker_config_for(
+                task, worker_config
+            )
             adapter_kwargs = await self._adapter_kwargs(
                 task,
-                worker_config=worker_config,
+                worker_config=resolved_worker_config,
                 **{
                     "task_id": task.task_id,
                     "executable": self.resolve_executable(),
-                    "session_dir": str(session_dir),
-                    "cwd": workspace,
                     "name": f"astrbot-{task.task_id[:8]}",
                     "command_timeout": self.command_timeout,
                 },
@@ -494,6 +500,9 @@ class TaskScheduler:
                 # cannot terminate a worker halfway through its handshake.
                 await adapter.start()
                 new_session = await adapter.new_session()
+                set_thinking = getattr(adapter, "set_thinking_level", None)
+                if callable(set_thinking):
+                    await set_thinking(resolved_worker_config.thinking_level)
                 state = await adapter.get_state()
                 session_id = _session_id(state)
                 session_path = (

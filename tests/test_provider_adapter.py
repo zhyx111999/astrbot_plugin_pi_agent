@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import pytest
 
 from pi_agent_bridge.provider import (
+    PiModelSettings,
     PiProviderError,
     build_provider_binding,
-    resolve_provider_id,
     safe_error_summary,
 )
 
@@ -43,6 +43,14 @@ def test_binding_writes_only_variable_references(tmp_path):
         provider_id="gateway/main",
         provider=OpenAICompatibleProvider(),
         agent_dir=tmp_path / "agent",
+        model_settings=PiModelSettings(
+            thinking_level="high",
+            context_window=64000,
+            max_output_tokens=4096,
+            input_modalities=("text", "image"),
+            temperature=0.2,
+            sampling_params={"reasoning_effort": "high", "max_tokens": 4096},
+        ),
     )
 
     models = (tmp_path / "agent" / "models.json").read_text(encoding="utf-8")
@@ -60,26 +68,15 @@ def test_binding_writes_only_variable_references(tmp_path):
     assert model_entry["maxTokens"] == 4096
     assert model_entry["reasoning"] is True
     assert model_entry["samplingParams"] == {
-        "temperature": 0.2,
         "reasoning_effort": "high",
         "max_tokens": 4096,
+        "temperature": 0.2,
+        "topP": 1.0,
     }
-    assert model_entry["cost"] == {"input": 1, "output": 2}
-    assert model_entry["compat"] == {"supportsDeveloperRole": False}
+    assert "cost" not in model_entry
+    assert "compat" not in model_entry
     assert "api-secret" not in models
     assert "tenant-secret" not in models
-
-
-@pytest.mark.asyncio
-async def test_empty_config_uses_current_chat_provider_id():
-    class Context:
-        async def get_current_chat_provider_id(self, umo):
-            assert umo == "qq:1"
-            return "chat-provider"
-
-    assert await resolve_provider_id(Context(), "", "qq:1") == "chat-provider"
-
-
 def test_non_openai_provider_is_rejected(tmp_path):
     class Provider:
         provider_config = {

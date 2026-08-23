@@ -1,6 +1,6 @@
 name: astrbot_plugin_pi_agent
 display_name: Pi Agent
 desc: General-purpose Pi Agent executor for AstrBot, with isolated background tasks and direct native-session inspection.
-version: v0.1.0
+version: v0.2.0
 author: zhyx111999
 repo: https://github.com/zhyx111999/astrbot_plugin_pi_agent

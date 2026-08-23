@@ -40,7 +40,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - `pi_agent_bridge/scheduler.py`：并发限制、后台观察、worker 生命周期和重启接管。
 - `pi_agent_bridge/service.py`：给 AstrBot 工具使用的任务控制和 native session JSONL 读取 facade。
 - `pi_agent_bridge/context.py`：创建任务时构造人设、当前事件公开字段和原始消息的一次性快照。
-- `pi_agent_bridge/provider.py`：将 AstrBot OpenAI-compatible provider 映射为 Pi 的 worker 配置；密钥只进入子进程环境。
+- `pi_agent_bridge/provider.py`：读取 AstrBot 选定 Provider 的连接地址、鉴权和模型绑定；将插件显式配置的 PiModelSettings 写入任务专属 Pi `models.json`。
 - `pi_agent_bridge/artifacts.py`：保留兼容模块；新异步任务不自动扫描或提炼 workspace 内容。
 - `pi_agent_bridge/wakeup.py`：为将来可用的主模型唤醒入口保留适配边界；没有公开唤醒 API 时不主动触发主模型。
 
@@ -51,7 +51,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - 首选插件随发行版附带的 Node `22.19.0` 与 Pi `0.84.2` runtime。源码 Git 仓库不提交 Node/Pi 二进制；未安装 runtime release asset 时，必须自行安装 Pi CLI 并确保 `pi` 在 AstrBot 进程的 `PATH` 中。
 - 选择一个 AstrBot provider 并配置可用密钥。首版只接受 OpenAI-compatible provider。
 
-后台 Pi 会读取所选 AstrBot Provider 的模型配置，并映射到任务专属的 Pi `models.json`：模型能力模态、推理标记、上下文上限、输出上限、自定义请求体、成本和兼容参数都会尽量保持一致。AstrBot 未配置的字段不会被插件硬编码覆盖，而是交给 Pi 的默认值；API key、鉴权头等敏感值只通过任务工作进程环境传递，不写入任务数据库或快照。
+后台 Pi 使用 `pi_model` 选择的 AstrBot Provider/model 作为模型绑定，但不会自动继承该 Provider 的上下文、推理、输出、模态、采样、成本或兼容字段。Pi 的运行参数全部由以下插件配置项明确控制：`pi_thinking_level`、`pi_context_window`、`pi_max_output_tokens`、`pi_input_modalities`、`pi_temperature`、`pi_top_p`、`pi_top_k`、`pi_min_p` 和 `pi_sampling_params`。填写 0 或留空的数值字段不写入 Pi 配置，由 Pi 使用默认值；Provider 只提供 OpenAI-compatible 连接地址、鉴权和已选模型绑定。
 
 ## 安装
 
@@ -69,7 +69,16 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | 配置项 | 默认值 | 作用 |
 | --- | ---: | --- |
 | `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
-| `pi_model` | `""` | 直接选择 AstrBot 中已经配置好的具体 Provider/模型。所有后台 Pi 任务固定使用这个模型，不继承当前聊天模型。仅支持 OpenAI-compatible Provider。 |
+| `pi_model` | `""` | 只选择一个 AstrBot 已配置的 Provider/model 绑定；不再从这里读取或覆盖 Pi 的推理、上下文、输出和采样参数。 |
+| `pi_thinking_level` | `medium` | Pi 官方 thinking level：`off`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。 |
+| `pi_context_window` | `0` | Pi 上下文窗口；0 表示不写入，由 Pi 默认值决定。 |
+| `pi_max_output_tokens` | `0` | Pi 最大输出 token；0 表示不写入，由 Pi 默认值决定。 |
+| `pi_input_modalities` | `["text", "image"]` | Pi 模型输入模态。当前支持 text/image。 |
+| `pi_temperature` | `0.5` | Pi temperature。 |
+| `pi_top_p` | `1.0` | Pi top-p。 |
+| `pi_top_k` | `0` | Pi top-k；0 表示不写入。 |
+| `pi_min_p` | `0.0` | Pi min-p；0 表示不写入。 |
+| `pi_sampling_params` | `{}` | 额外写入 Pi `samplingParams` 的 JSON 参数。 |
 | `pi_session_dir` | `~/.pi/agent/sessions` | 旧版 `/pi`、`/pic` 线路使用的 Pi 原生会话目录。后台任务使用独立会话。 |
 | `state_directory` | `~/.pi/astrbot_plugin_pi_agent` | 桥接状态目录，存放任务数据库、会话、Agent 配置、工作区和 artifact 元数据。 |
 | `task_database` | `~/.pi/astrbot_plugin_pi_agent/tasks.db` | SQLite WAL 任务注册表路径。 |

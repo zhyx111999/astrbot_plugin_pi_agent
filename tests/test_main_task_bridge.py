@@ -187,9 +187,8 @@ async def test_pi_agent_uses_only_fixed_provider_and_model_descriptor(plugin):
 
     assert result == {"ok": True, "status": "queued"}
     task_context = service.create_task.await_args.kwargs["context"]
-    assert task_context[WORKER_DESCRIPTOR_KEY] == {
-        "source_provider_id": "gateway/provider-model",
-    }
+    assert task_context[WORKER_DESCRIPTOR_KEY]["source_provider_id"] == "gateway/provider-model"
+    assert task_context[WORKER_DESCRIPTOR_KEY]["model_settings"]["thinking_level"] == "medium"
     assert "api_key" not in json.dumps(task_context).lower()
 
 

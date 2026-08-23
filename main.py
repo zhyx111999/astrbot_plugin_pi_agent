@@ -31,6 +31,7 @@ from pi_agent_bridge import (
     capture_task_context,
 )
 from pi_agent_bridge.provider import (
+    PiModelSettings,
     PiProviderError,
     build_provider_binding,
 )
@@ -220,7 +221,7 @@ class PiAgentPlugin(Star):
             source_id = str(descriptor.get("source_provider_id") or "").strip()
             if not source_id:
                 raise PiProviderError(
-                    "The fixed pi_model configuration must select an AstrBot provider/model"
+                    "The pi_model setting must select an AstrBot-configured model"
                 )
             getter = getattr(self.astrbot_adapter.context, "get_provider_by_id", None)
             if not callable(getter):
@@ -231,10 +232,16 @@ class PiAgentPlugin(Star):
             if provider is None:
                 raise PiProviderError(f"AstrBot provider {source_id!r} is unavailable")
             agent_dir = agent_root / task.task_id
+            settings = PiModelSettings.from_dict(
+                descriptor.get("model_settings", {})
+                if isinstance(descriptor.get("model_settings", {}), dict)
+                else {}
+            )
             binding = build_provider_binding(
                 provider_id=source_id,
                 provider=provider,
                 agent_dir=agent_dir,
+                model_settings=settings,
             )
             return PiWorkerConfig(
                 provider=binding.pi_provider_id,
@@ -243,6 +250,7 @@ class PiAgentPlugin(Star):
                 agent_dir=binding.agent_dir,
                 skill_paths=configured_skill_paths_for_worker(),
                 extension_paths=configured_extension_paths_for_worker(),
+                thinking_level=settings.thinking_level,
             )
 
         try:
@@ -960,7 +968,7 @@ class PiAgentPlugin(Star):
             if not provider_id:
                 return self._bridge_error(
                     operation,
-                    "请先在 pi_model 中选择 AstrBot 已配置的具体模型",
+                    "请先在 pi_model 中选择 AstrBot 已配置的模型",
                 )
             service = await self._task_service_or_error()
             context = capture_task_context(event)
@@ -973,6 +981,9 @@ class PiAgentPlugin(Star):
                 )
             descriptor = {
                 "source_provider_id": provider_id,
+                "model_settings": PiModelSettings.from_config(
+                    self.plugin_config
+                ).as_dict(),
             }
 
             # Capture the full context only after ``PiTaskService`` has chosen

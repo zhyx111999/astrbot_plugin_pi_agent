@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
@@ -32,7 +31,87 @@ class PiProviderBinding:
     environment: dict[str, str] = field(repr=False, compare=False)
 
 
-# AstrBot adapter ids are intentionally allow-listed.  Merely having an
+@dataclass(frozen=True, slots=True)
+class PiModelSettings:
+    """Explicit Pi runtime controls owned by the plugin configuration."""
+
+    thinking_level: str = "medium"
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    input_modalities: tuple[str, ...] = ("text", "image")
+    temperature: float | None = 0.5
+    top_p: float | None = 1.0
+    top_k: int | None = None
+    min_p: float | None = None
+    sampling_params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        level = str(self.thinking_level or "medium").strip().lower()
+        if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError(f"unsupported pi_thinking_level: {level}")
+        modalities = tuple(
+            item for item in (str(value).strip().lower() for value in self.input_modalities)
+            if item in {"text", "image"}
+        )
+        if "text" not in modalities:
+            modalities = ("text", *modalities)
+        object.__setattr__(self, "thinking_level", level)
+        object.__setattr__(self, "input_modalities", tuple(dict.fromkeys(modalities)))
+        for name in ("context_window", "max_output_tokens", "top_k"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or int(value) <= 0):
+                object.__setattr__(self, name, None)
+        for name in ("temperature", "top_p", "min_p"):
+            value = getattr(self, name)
+            if value is not None:
+                numeric = float(value)
+                if name == "min_p" and numeric <= 0:
+                    numeric = None
+                object.__setattr__(self, name, numeric)
+        object.__setattr__(self, "sampling_params", _json_mapping(self.sampling_params))
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "PiModelSettings":
+        return cls(
+            thinking_level=value.get("thinking_level", "medium"),
+            context_window=_positive_int(value.get("context_window")),
+            max_output_tokens=_positive_int(value.get("max_output_tokens")),
+            input_modalities=tuple(value.get("input_modalities") or ("text", "image")),
+            temperature=_number_or_none(value.get("temperature")),
+            top_p=_number_or_none(value.get("top_p")),
+            top_k=_positive_int(value.get("top_k")),
+            min_p=_number_or_none(value.get("min_p")),
+            sampling_params=value.get("sampling_params") or {},
+        )
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> "PiModelSettings":
+        return cls(
+            thinking_level=config.get("pi_thinking_level", "medium"),
+            context_window=_positive_int(config.get("pi_context_window")),
+            max_output_tokens=_positive_int(config.get("pi_max_output_tokens")),
+            input_modalities=tuple(config.get("pi_input_modalities") or ("text", "image")),
+            temperature=_number_or_none(config.get("pi_temperature", 0.5)),
+            top_p=_number_or_none(config.get("pi_top_p", 1.0)),
+            top_k=_positive_int(config.get("pi_top_k")),
+            min_p=_number_or_none(config.get("pi_min_p")),
+            sampling_params=config.get("pi_sampling_params") or {},
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "thinking_level": self.thinking_level,
+            "context_window": self.context_window,
+            "max_output_tokens": self.max_output_tokens,
+            "input_modalities": list(self.input_modalities),
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "min_p": self.min_p,
+            "sampling_params": dict(self.sampling_params),
+        }
+
+
 # ``api_base`` field is not sufficient: Anthropic and several other adapters
 # also expose that field but use a different wire protocol.
 _OPENAI_COMPATIBLE_TYPES = frozenset(
@@ -50,29 +129,12 @@ _OPENAI_COMPATIBLE_TYPES = frozenset(
     }
 )
 _RESPONSES_TYPES = frozenset({"openai_responses"})
-async def resolve_provider_id(context: Any, configured_id: str | None, umo: str) -> str:
-    """Resolve the configured provider or the model selected for this chat."""
-
-    provider_id = str(configured_id or "").strip()
-    if provider_id:
-        return provider_id
-    getter = getattr(context, "get_current_chat_provider_id", None)
-    if not callable(getter):
-        raise PiProviderError("AstrBot provider selection API is unavailable")
-    result = getter(umo)
-    if asyncio.iscoroutine(result):
-        result = await result
-    if not isinstance(result, str) or not result.strip():
-        raise PiProviderError("AstrBot did not return a chat provider id")
-    return result.strip()
-
-
 def build_provider_binding(
     *,
     provider_id: str,
     provider: Any,
     agent_dir: str | os.PathLike[str],
-    model_override: str | None = None,
+    model_settings: PiModelSettings | None = None,
 ) -> PiProviderBinding:
     """Create a Pi OpenAI-compatible provider entry without writing a key."""
 
@@ -84,7 +146,8 @@ def build_provider_binding(
             "The selected AstrBot provider is not supported by the initial Pi "
             "bridge; OpenAI-compatible providers only"
         )
-    model = _model(provider, meta, config, model_override)
+    model = _model(provider, meta, config)
+    settings = model_settings or PiModelSettings()
     pi_provider_id = f"astrbot-{_safe_id(provider_id)}"
     path = Path(agent_dir).expanduser().resolve(strict=False)
     # Pi 0.84.x reads models.json from this exact environment-controlled agent
@@ -105,9 +168,7 @@ def build_provider_binding(
         "apiKey": "$PI_ASTRBOT_API_KEY",
         "models": [_build_model_entry(
             model=model,
-            provider=provider,
-            meta=meta,
-            config=config,
+            settings=settings,
         )],
     }
     headers = _header_refs(config, environment)
@@ -161,88 +222,30 @@ def write_models_json(agent_dir: Path, provider_id: str, entry: Mapping[str, Any
 def _build_model_entry(
     *,
     model: str,
-    provider: Any,
-    meta: Any,
-    config: Mapping[str, Any],
+    settings: PiModelSettings,
 ) -> dict[str, Any]:
-    """Map AstrBot's public provider/model values to Pi model metadata.
+    """Build Pi model metadata exclusively from explicit plugin settings."""
 
-    Missing values are intentionally omitted so Pi applies its own defaults;
-    AstrBot's unset modalities retain its backward-compatible text/image input
-    behavior because Pi does not support audio or video model inputs.
-    """
-
-    entry: dict[str, Any] = {"id": model}
-    modalities = config.get("modalities")
-    if modalities is None or modalities == []:
-        supported_modalities = {"text", "image"}
-    elif isinstance(modalities, list):
-        supported_modalities = {str(item).strip().lower() for item in modalities}
-    else:
-        supported_modalities = {"text"}
-    input_types = ["text"]
-    if "image" in supported_modalities:
-        input_types.append("image")
-    entry["input"] = input_types
-
-    extra_body = config.get("custom_extra_body")
-    if isinstance(extra_body, Mapping) and extra_body:
-        sampling_params = _json_mapping(extra_body)
-        if sampling_params:
-            entry["samplingParams"] = sampling_params
-        max_tokens = _positive_int(
-            extra_body.get("max_tokens") or extra_body.get("max_output_tokens")
-        )
-        if max_tokens is not None:
-            entry["maxTokens"] = max_tokens
-        if extra_body.get("reasoning_effort"):
-            entry["reasoning"] = True
-
-    reasoning = config.get("reasoning", getattr(meta, "reasoning", None))
-    if isinstance(reasoning, bool):
-        entry["reasoning"] = reasoning
-
-    metadata = getattr(meta, "model_metadata", None) or getattr(meta, "metadata", None)
-    if isinstance(metadata, Mapping):
-        metadata = metadata.get(model, metadata)
-    if isinstance(metadata, Mapping):
-        if isinstance(metadata.get("modalities"), Mapping):
-            metadata_input = metadata["modalities"].get("input")
-            if isinstance(metadata_input, list):
-                entry["input"] = [
-                    item for item in ("text", "image") if item in metadata_input
-                ] or ["text"]
-        if isinstance(metadata.get("reasoning"), bool):
-            entry["reasoning"] = metadata["reasoning"]
-        limit = metadata.get("limit")
-        if isinstance(limit, Mapping):
-            context = _positive_int(limit.get("context"))
-            output = _positive_int(limit.get("output"))
-            if context is not None:
-                entry["contextWindow"] = context
-            if output is not None:
-                entry["maxTokens"] = output
-        for source, target in (
-            ("contextWindow", "contextWindow"),
-            ("maxTokens", "maxTokens"),
-            ("max_tokens", "maxTokens"),
-        ):
-            value = _positive_int(metadata.get(source))
-            if value is not None:
-                entry[target] = value
-
-    context_window = _positive_int(
-        config.get("max_context_tokens")
-        or config.get("context_window")
-        or config.get("contextWindow")
-    )
-    if context_window is not None:
-        entry["contextWindow"] = context_window
-
-    for key in ("cost", "compat"):
-        value = config.get(key)
-        if isinstance(value, Mapping) and value:
-            entry[key] = _json_mapping(value)
+    entry: dict[str, Any] = {
+        "id": model,
+        "input": list(settings.input_modalities),
+        "reasoning": settings.thinking_level != "off",
+    }
+    if settings.context_window is not None:
+        entry["contextWindow"] = settings.context_window
+    if settings.max_output_tokens is not None:
+        entry["maxTokens"] = settings.max_output_tokens
+    sampling = dict(settings.sampling_params)
+    if settings.temperature is not None:
+        sampling["temperature"] = settings.temperature
+    if settings.top_p is not None:
+        sampling["topP"] = settings.top_p
+    if settings.top_k is not None:
+        sampling["topK"] = settings.top_k
+    if settings.min_p is not None:
+        sampling["minP"] = settings.min_p
+    if sampling:
+        entry["samplingParams"] = sampling
     return entry
 
 
@@ -265,6 +268,17 @@ def _positive_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def _number_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _provider_config(provider: Any) -> Mapping[str, Any]:
     try:
         value = getattr(provider, "provider_config", None)
@@ -288,8 +302,8 @@ def _provider_meta(provider: Any) -> Any:
         raise PiProviderError("Unable to read AstrBot provider metadata") from exc
 
 
-def _model(provider: Any, meta: Any, config: Mapping[str, Any], override: str | None) -> str:
-    model = str(override or getattr(meta, "model", "") or "").strip()
+def _model(provider: Any, meta: Any, config: Mapping[str, Any]) -> str:
+    model = str(getattr(meta, "model", "") or "").strip()
     if not model:
         getter = getattr(provider, "get_model", None)
         if callable(getter):
@@ -401,7 +415,6 @@ __all__ = [
     "PiProviderBinding",
     "PiProviderError",
     "build_provider_binding",
-    "resolve_provider_id",
     "safe_error_summary",
     "write_models_json",
 ]
