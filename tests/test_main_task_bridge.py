@@ -101,7 +101,10 @@ async def test_invalid_skill_path_does_not_block_plugin_service_creation(plugin,
 
 @pytest.mark.asyncio
 async def test_pi_agent_can_disable_persona_inheritance(plugin):
-    plugin.plugin_config = {"inherit_persona": False}
+    plugin.plugin_config = {
+        "inherit_persona": False,
+        "pi_model": {"provider_id": "fixed-provider", "model_id": "fixed-model"},
+    }
     service = MagicMock()
     service.create_task = AsyncMock(return_value={"ok": True, "status": "queued"})
     plugin.pi_task_service = service
@@ -113,13 +116,17 @@ async def test_pi_agent_can_disable_persona_inheritance(plugin):
 
 
 @pytest.mark.asyncio
-async def test_pi_agent_captures_current_provider_as_secret_free_descriptor(plugin):
+async def test_pi_agent_uses_only_fixed_provider_and_model_descriptor(plugin):
     class Context:
-        async def get_current_chat_provider_id(self, umo):
-            assert umo == "qq:owner"
-            return "gateway/chat-model"
+        async def get_current_chat_provider_id(self, _umo):
+            raise AssertionError("pi_agent must not inherit the current chat provider")
 
-    plugin.plugin_config = {"pi_model": "delegated-model"}
+    plugin.plugin_config = {
+        "pi_model": {
+            "provider_id": "gateway/provider",
+            "model_id": "delegated-model",
+        }
+    }
     plugin.astrbot_adapter.context = Context()
     service = MagicMock()
     service.create_task = AsyncMock(return_value={"ok": True, "status": "queued"})
@@ -130,15 +137,18 @@ async def test_pi_agent_captures_current_provider_as_secret_free_descriptor(plug
     assert result == {"ok": True, "status": "queued"}
     task_context = service.create_task.await_args.kwargs["context"]
     assert task_context[WORKER_DESCRIPTOR_KEY] == {
-        "source_provider_id": "gateway/chat-model",
-        "model_override": "delegated-model",
+        "source_provider_id": "gateway/provider",
+        "model_id": "delegated-model",
     }
     assert "api_key" not in json.dumps(task_context).lower()
 
 
 @pytest.mark.asyncio
 async def test_pi_agent_rejects_mcp_config_with_structured_envelope(plugin):
-    plugin.plugin_config = {"pi_mcp_config_paths": ["/configured/mcp.json"]}
+    plugin.plugin_config = {
+        "pi_model": {"provider_id": "fixed-provider", "model_id": "fixed-model"},
+        "pi_mcp_config_paths": ["/configured/mcp.json"],
+    }
     service = MagicMock()
     service.create_task = AsyncMock()
     plugin.pi_task_service = service

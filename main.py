@@ -33,7 +33,6 @@ from pi_agent_bridge import (
 from pi_agent_bridge.provider import (
     PiProviderError,
     build_provider_binding,
-    resolve_provider_id,
 )
 from pi_agent_bridge.runtime import PiRuntimeAdapter
 from pi_agent_bridge.security import safe_error_summary
@@ -102,7 +101,6 @@ class PiConnectorPlugin(Star):
         # if per-plugin isolation is desired.
         self.pi_connection_manager = PiConnectionManager(
             session_dir=self._config_value("pi_session_dir", None) or None,
-            executable=self._config_value("pi_executable", "") or "pi",
         )
         self.pi_task_service: PiTaskService | None = None
         self.pi_task_scheduler: TaskScheduler | None = None
@@ -179,21 +177,13 @@ class PiConnectorPlugin(Star):
         if not workspace_root:
             workspace_root = str(state_root / "workspaces")
 
-        configured_command = self._config_value("pi_executable", "") or None
         runtime_adapter = PiRuntimeAdapter(
             plugin_root=Path(__file__).parent,
-            configured_command=configured_command,
+            configured_command=None,
         )
         agent_root = state_root / "agents"
-        configured_provider_id = (
-            self._config_value("pi_provider_id", "")
-            or self._config_value("pi_provider", "")
-            or ""
-        )
-        configured_model = self._config_value("pi_model", "") or None
-        # Resource paths are validated lazily when a worker is actually
-        # launched. A bad optional path must fail that task structurally, not
-        # prevent AstrBot from loading the plugin or handling normal chat.
+        # The provider and model are captured with each task so every worker
+        # uses the one fixed plugin configuration, never the current chat model.
         configured_skill_paths = self._config_value("pi_skill_paths", [])
 
         def configured_skill_paths_for_worker() -> tuple[str, ...]:
@@ -208,13 +198,10 @@ class PiConnectorPlugin(Star):
             if not isinstance(descriptor, dict):
                 raise PiProviderError("Pi task provider descriptor is invalid")
             source_id = str(descriptor.get("source_provider_id") or "").strip()
-            if not source_id:
-                # Keep old task rows and lightweight host test doubles usable.
-                # New AstrBot tasks always carry a source provider descriptor.
-                return PiWorkerConfig(
-                    provider=configured_provider_id or None,
-                    model=configured_model,
-                    skill_paths=configured_skill_paths_for_worker(),
+            model_id = str(descriptor.get("model_id") or "").strip()
+            if not source_id or not model_id:
+                raise PiProviderError(
+                    "The fixed pi_model configuration must include provider_id and model_id"
                 )
             getter = getattr(self.astrbot_adapter.context, "get_provider_by_id", None)
             if not callable(getter):
@@ -229,7 +216,7 @@ class PiConnectorPlugin(Star):
                 provider_id=source_id,
                 provider=provider,
                 agent_dir=agent_dir,
-                model_override=descriptor.get("model_override"),
+                model_override=model_id,
             )
             return PiWorkerConfig(
                 provider=binding.pi_provider_id,
@@ -243,7 +230,7 @@ class PiConnectorPlugin(Star):
             scheduler = TaskScheduler(
                 registry,
                 workspace_root=workspace_root,
-                executable=configured_command or "pi",
+                executable="pi",
                 runtime_adapter=runtime_adapter,
                 agent_root=agent_root,
                 worker_config_factory=worker_config_factory,
@@ -889,6 +876,19 @@ class PiConnectorPlugin(Star):
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied)
         try:
+            model_config = self._config_value("pi_model", {})
+            if not isinstance(model_config, dict):
+                return self._bridge_error(
+                    operation,
+                    "请先在 pi_model 中配置固定的 provider_id 和 model_id",
+                )
+            provider_id = str(model_config.get("provider_id") or "").strip()
+            model_id = str(model_config.get("model_id") or "").strip()
+            if not provider_id or not model_id:
+                return self._bridge_error(
+                    operation,
+                    "请先在 pi_model 中配置固定的 provider_id 和 model_id",
+                )
             service = await self._task_service_or_error()
             context = capture_task_context(event)
             mcp_paths = self._config_value("pi_mcp_config_paths", [])
@@ -898,33 +898,10 @@ class PiConnectorPlugin(Star):
                     "Pi MCP integration is unsupported by the bundled Pi RPC bridge; "
                     "configure a separately maintained Pi extension first",
                 )
-            descriptor: dict[str, Any] = {}
-            context_api = self.astrbot_adapter.context
-            provider_getter = getattr(context_api, "get_current_chat_provider_id", None)
-            if configured_provider_id := (
-                self._config_value("pi_provider_id", "")
-                or self._config_value("pi_provider", "")
-                or ""
-            ):
-                provider_id = await resolve_provider_id(
-                    context_api,
-                    configured_provider_id,
-                    context.session_origin,
-                )
-                descriptor = {
-                    "source_provider_id": provider_id,
-                    "model_override": self._config_value("pi_model", "") or None,
-                }
-            elif callable(provider_getter):
-                provider_id = await resolve_provider_id(
-                    context_api,
-                    None,
-                    context.session_origin,
-                )
-                descriptor = {
-                    "source_provider_id": provider_id,
-                    "model_override": self._config_value("pi_model", "") or None,
-                }
+            descriptor = {
+                "source_provider_id": provider_id,
+                "model_id": model_id,
+            }
 
             # Capture the full context only after ``PiTaskService`` has chosen
             # the final task workspace.  This keeps event-owned media alive
@@ -932,15 +909,11 @@ class PiConnectorPlugin(Star):
             # still returning immediately from the model tool call.
             initial_context = context
             initial_context_data = initial_context.as_dict()
-            if descriptor:
-                # Persist the secret-free provider selection before the
-                # asynchronous capture callback runs.  The callback repeats
-                # it on the richer snapshot so both launch paths agree.
-                initial_context_data[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
+            initial_context_data[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
             inherit_persona = self._config_bool("inherit_persona", True)
             # Keep test doubles and host integrations that replace the public
             # context object after plugin construction aligned with capture.
-            self.astrbot_context_adapter.context = context_api
+            self.astrbot_context_adapter.context = self.astrbot_adapter.context
 
             async def prepare_context(_task_id: str, task_workspace: Path):
                 captured = await self.astrbot_context_adapter.capture(
@@ -949,8 +922,7 @@ class PiConnectorPlugin(Star):
                     inherit_persona=inherit_persona,
                 )
                 prepared = captured.as_dict()
-                if descriptor:
-                    prepared[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
+                prepared[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
                 return prepared
 
             result = await service.create_task(

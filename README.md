@@ -33,7 +33,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 
 主要模块：
 
-- `pi_agent_bridge/runtime.py`：选择插件内置 Node/Pi，或显式命令、PATH fallback。
+- `pi_agent_bridge/runtime.py`：固定选择插件内置 Node `22.19.0` / Pi `0.84.2` runtime，不向用户暴露可执行文件路径覆盖配置。
 - `pi_agent_bridge/rpc.py`：公开 Pi RPC 的 JSONL 读写、事件游标、steer、cancel、resume。
 - `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、快照、游标、artifact 和 retention。
 - `pi_agent_bridge/scheduler.py`：并发限制、后台观察、无意义事件计数和重启接管。
@@ -69,9 +69,7 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | --- | ---: | --- |
 | `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
 | `task_require_admin` | `false` | 为 `true` 时仅 AstrBot 管理员可使用异步任务工具；否则按任务 owner 隔离。 |
-| `pi_provider_id` | `""` | 指定 Pi provider；为空时使用当前聊天选中的 provider。 |
-| `pi_model` | `""` | 可选模型覆盖；为空时使用 provider 当前模型。 |
-| `pi_executable` | `""` | 可选的单一 Pi 可执行文件路径；为空时优先插件内置 runtime，再 fallback 到 PATH 的 `pi`。不要填写 `node /path/cli.js` 这样的多段 shell 命令。 |
+| `pi_model` | `{}` | 后台 Pi 的唯一固定模型配置，包含 `provider_id` 和 `model_id`。所有后台 Pi 任务都使用这里的 Provider 和模型，不继承当前聊天模型。仅支持 OpenAI-compatible Provider。 |
 | `state_directory` | `""` | 状态根目录；为空使用插件 `.pi`。 |
 | `task_database` | `""` | SQLite 路径；为空使用 `state_directory/tasks.db`。 |
 | `workspace_root` | `""` | 任务工作区根目录；为空使用 `state_directory/workspaces`。 |
