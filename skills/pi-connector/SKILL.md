@@ -1,48 +1,62 @@
 ---
 name: pi-connector
-description: Connect AstrBot to a local pi agent for code tasks, file operations, and session management. Use when the user wants to work with a local project through the pi coding assistant.
+description: Delegate long-running research, coding, and multi-step work to an isolated Pi worker from AstrBot, then observe it with short polling calls while the main conversation remains available.
 ---
 
-# AstrBot Pi Connector
+# Pi Agent Bridge
 
-## When to use
+## Use Pi when
 
-Use this skill when the user wants to:
+Call `pi_agent` for work that is long-running, multi-step, or naturally isolated:
 
-- Write, edit, or refactor code in a specific project directory
-- Run a series of commands through the local pi coding agent
-- Continue a previous pi session from AstrBot
-- Execute a pi slash command (e.g., `/opsx-explore`)
-- List available pi slash commands
-- Respond to a pi extension UI request (confirm, select, input, editor)
+- repository research, coding, tests, and file changes;
+- several dependent tool calls or a long-running command;
+- independent parallel subtasks;
+- a user explicitly asks for background or continuous execution.
 
-## Available tools
+Keep ordinary questions, short rewrites, and one quick tool call in AstrBot's own agent. Pi is a worker, not a replacement for the main conversational model.
 
-- `pi_open_session(path: string, name?: string)` — Open a new pi session at an absolute directory path. `path` must be a real directory.
-- `pi_list_sessions(dir?: string)` — List existing pi sessions in a directory, or in the active session's directory if omitted.
-- `pi_resume_session(session_id?: string)` — Resume an existing session by its id or partial id. Omit to resume the most recent session.
-- `pi_send_message(message: string)` — Send a natural language message to the current pi session and return the response.
-- `pi_get_session_info()` — Return the current session id, name, working directory, file path, and message count.
-- `pi_run_command(command: string)` — Execute a pi slash command in the current session (without the leading `/`).
-- `pi_get_available_commands()` — List the slash commands available in the current pi session.
-- `pi_abort()` — Abort the current pi operation.
-- `pi_reply_ui(request_id: number, value: string)` — Reply to a pending pi extension UI request.
+## Non-blocking workflow
 
-## Standard workflow
+1. Call `pi_agent(prompt, workspace?)` with a complete, self-contained instruction. The call returns a `task_id` immediately.
+2. Continue the current conversation normally. Do not wait for Pi to finish inside the same turn and do not repeatedly call a long-running operation.
+3. In a later model turn, call `pi_task_poll(task_id)` to drain local buffered events and read the latest local observation. The tool does not wait for Pi or request remote state; the background observer performs the configured remote state request. Use `pi_task_status` for durable state, `pi_task_result` for the latest snapshot content plus persisted artifacts, or `pi_artifact_inspect` for produced files/media.
+4. If `has_new_meaningful_event` is true, summarize the new progress. Protocol heartbeats, empty JSONL records, and duplicate snapshots are not meaningful events.
+5. If status is `needs_user_decision`, tell the user that there has been no meaningful progress for the configured number of observation cycles. Ask whether to continue, add a requirement, inspect, cancel, or delete; do not kill the task automatically.
+6. Use `pi_task_follow_up(task_id, message)` for an additional user requirement. Use `pi_task_resume(task_id)` to resume a logically paused/orphaned task, and use cancel/delete only when requested or clearly required.
 
-1. **Open or resume a session.** If the user has provided a directory, use `pi_open_session`. If they mention a previous session, use `pi_list_sessions` first, then `pi_resume_session`.
+There is no hard task timeout and no idle timeout. `command_timeout_seconds` bounds only the background observer's short `get_state` request and steer/cancel/resume acknowledgements; it never terminates a Pi worker. `pi_task_poll` reads local buffered events and the latest durable snapshot without waiting for Pi. Each task owns a separate Pi process, session, workspace, event cursor, and latest snapshot, so multiple tasks can run for one AstrBot conversation without a conversation lock.
 
-2. **Send the request.** Use `pi_send_message` for general tasks, or `pi_run_command` for pi slash commands.
+## Async task tools
 
-3. **Wait for the response.** The tool returns the final pi text. If pi emits a UI request during processing, the response will include the request and instructions for the user.
+- `pi_agent(prompt: string, workspace?: string)` — create an isolated task and return immediately.
+- `pi_task_status(task_id: string)` — read status, owner-scoped metadata, and latest snapshot.
+- `pi_task_list()` — list visible tasks.
+- `pi_task_result(task_id: string)` — read the latest snapshot content and persisted artifacts.
+- `pi_task_poll(task_id: string)` — drain local buffered events and return the latest observation without a remote Pi request.
+- `pi_task_follow_up(task_id: string, message: string)` — steer an active worker with an added requirement.
+- `pi_task_resume(task_id: string)` — resume a paused or recoverable task.
+- `pi_task_cancel(task_id: string)` — cancel the worker while retaining history.
+- `pi_task_delete(task_id: string)` — cancel and remove task-owned resources.
+- `pi_session_list()` — list sessions represented by visible tasks.
+- `pi_session_inspect(task_id: string)` — inspect a task's Pi session.
+- `pi_session_resume(task_id: string)` — resume that session through the task bridge.
+- `pi_session_delete(task_id: string)` — remove that session and its task resources.
+- `pi_artifact_inspect(task_id: string)` — inspect text, JSON, Markdown, files, and media artifacts.
 
-4. **Handle UI requests.** If a UI request appears, ask the user to reply with the appropriate `/pi ...` subcommand (e.g., `/pi confirm 1 yes`). Do not fabricate replies yourself.
+Every async tool returns a JSON envelope with `schema_version`, `ok`, `operation`, `task_id`, `status`, `has_new_meaningful_event`, `progress`, `content`, `artifacts`, and `error`. Treat both success and failure as model input. Never expose a raw exception directly to the user; explain the structured error in the current assistant voice.
 
-5. **Summarize.** After pi finishes, summarize the result for the user.
+## Context, provider, Skill, and MCP
 
-## Safety notes
+- At creation time Pi receives the configured AstrBot persona (when enabled) plus a one-time snapshot of the current event's public fields and source message. Later messages are not synchronized automatically; use `pi_task_follow_up`.
+- An empty `pi_provider_id` follows the provider selected for the current chat. The initial adapter accepts OpenAI-compatible providers only. API keys are kept in the worker environment and must not be copied into prompts, task metadata, snapshots, or replies.
+- Pi official code and RPC remain unchanged. Each configured Skill directory is passed to the worker through a repeated public CLI argument (`--skill <path>`). This proves only that the path was supplied, not that Pi loaded the Skill; rely on the task snapshot/result for runtime evidence.
+- Pi `0.84.2` RPC has no native MCP bridge. AstrBot MCP servers are never inherited automatically. At present, any non-empty `pi_mcp_config_paths` setting makes `pi_agent` return a structured unsupported-capability envelope and the paths are not passed to Pi. Do not expose a raw exception or claim that MCP is available.
 
-- pi may execute shell commands or modify files. Always confirm the working directory before opening a session.
-- If pi asks for confirmation via a UI request, do not auto-approve. Let the user decide.
-- Do not send dangerous commands (e.g., `rm -rf /`, `sudo`, destructive writes) unless the user explicitly requests them.
-- Each AstrBot chat context has its own isolated pi session.
+## Safety and user control
+
+Confirm the target workspace before delegating. Pi inherits the AstrBot process permissions and can execute commands or modify files. Do not approve destructive commands, credential access, or broad filesystem changes without explicit user intent. When Pi requests extension UI input, preserve the request for the user instead of fabricating confirmation.
+
+## Legacy synchronous route
+
+For an existing interactive session, the compatibility tools remain available: `pi_open_session`, `pi_list_sessions`, `pi_resume_session`, `pi_send_message`, `pi_get_session_info`, `pi_run_command`, `pi_get_available_commands`, `pi_abort`, and `pi_reply_ui`. These are separate from the non-blocking `pi_agent` task workflow.

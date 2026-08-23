@@ -1,7 +1,10 @@
 """Manage per-chat pi RPC connections and session lifecycle."""
 
 import json
+import ntpath
 import os
+import posixpath
+import re
 from pathlib import Path
 
 from astrbot.api import logger
@@ -22,9 +25,30 @@ class PiConnectionManager:
 
     def _resolve_session_dir(self) -> str:
         """Return the absolute path to the pi session storage directory."""
-        if self.session_dir:
-            return os.path.expanduser(self.session_dir)
-        return os.path.expanduser("~/.pi/agent/sessions")
+        configured = self.session_dir or "~/.pi/agent/sessions"
+        return self._normalize_path(configured)
+
+    @staticmethod
+    def _home_directory() -> str:
+        """Resolve the home directory without losing POSIX paths on Windows."""
+
+        return (
+            os.environ.get("HOME")
+            or os.environ.get("USERPROFILE")
+            or os.path.expanduser("~")
+        )
+
+    @staticmethod
+    def _is_windows_absolute(path: str) -> bool:
+        return bool(re.match(r"^[A-Za-z]:[\\/]", path) or path.startswith("\\\\"))
+
+    @classmethod
+    def _expand_user_path(cls, path: str) -> str:
+        if path == "~":
+            return cls._home_directory()
+        if path.startswith("~/") or path.startswith("~\\"):
+            return posixpath.join(cls._home_directory(), path[2:])
+        return path
 
     def _normalize_path(self, path: str) -> str:
         """Resolve a user-supplied path to an absolute path.
@@ -34,10 +58,31 @@ class PiConnectionManager:
         home directory. Relative paths are resolved relative to the user's
         home directory, so ``code/`` becomes ``~/code/``.
         """
-        expanded = os.path.expanduser(path)
-        if os.path.isabs(expanded):
-            return os.path.normpath(expanded)
-        return os.path.normpath(os.path.join(os.path.expanduser("~"), expanded))
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("path cannot be empty")
+        expanded = self._expand_user_path(path.strip())
+        # Pi sessions can be created in a Linux/WSL environment while the
+        # AstrBot plugin itself is tested or hosted on Windows. Preserve that
+        # path dialect instead of letting ntpath reinterpret `/home/...` as
+        # `C:\\home\\...`.
+        if expanded.startswith("/") and not self._is_windows_absolute(expanded):
+            if expanded.startswith("//"):
+                return posixpath.normpath(expanded)
+            if path.strip().startswith("~"):
+                return posixpath.normpath(expanded)
+            return posixpath.normpath(
+                expanded if posixpath.isabs(expanded) else posixpath.join(self._home_directory(), expanded)
+            )
+        if self._is_windows_absolute(expanded):
+            return ntpath.normpath(expanded)
+        home = self._home_directory()
+        if home.startswith("/"):
+            # Keep the host-native join behavior for relative inputs.  This
+            # matters for callers that compare the normalized value with
+            # ``os.path.join`` while still allowing absolute POSIX paths to
+            # retain their slash semantics above.
+            return os.path.join(home, expanded)
+        return ntpath.normpath(ntpath.join(home, expanded))
 
     def _session_key(self, event) -> str:
         """Build a unique key for the chat context behind the event."""
@@ -58,11 +103,14 @@ class PiConnectionManager:
         Unix), join them with ``-``, and wrap the result in ``--``. On Windows,
         the drive-letter colon is also encoded so the resulting name is valid.
         """
-        cwd = os.path.normpath(cwd)
-        parts = [part for part in cwd.split(os.sep) if part]
-        encoded = "-".join(parts)
-        if os.name == "nt":
-            encoded = encoded.replace(":", "-")
+        cwd = self._normalize_path(cwd)
+        if cwd.startswith("/") and not self._is_windows_absolute(cwd):
+            parts = [part for part in cwd.split("/") if part]
+            encoded = "-".join(parts)
+        else:
+            normalized = ntpath.normpath(cwd)
+            parts = [part for part in re.split(r"[\\/]+", normalized) if part]
+            encoded = "-".join(parts).replace(":", "-")
         return f"--{encoded}--"
 
     def _extract_first_user_message_snippet(

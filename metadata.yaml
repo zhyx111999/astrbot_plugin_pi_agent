@@ -1,6 +1,6 @@
-name: astrbot_plugin_piconnector
-display_name: Pi Connector
-desc: Connect AstrBot to a local pi agent for session management, chat, and code tasks.
-version: v1.0.0
-author: AstrBot
-repo: https://github.com/AstrBotDevs/astrbot_plugin_piconnector
+name: astrbot_plugin_pi_agent
+display_name: Pi Agent Bridge
+desc: Delegate long-running Pi tasks from AstrBot without holding the current agent turn.
+version: v0.1.0
+author: zhyx111999
+repo: https://github.com/zhyx111999/astrbot_plugin_pi_agent

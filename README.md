@@ -1,231 +1,167 @@
-# astrbot_plugin_piconnector
+# astrbot_plugin_pi_agent
 
-将 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 与本地 [pi](https://github.com/earendil-works/pi-mono) 编码代理连接起来的插件。
+一个独立维护的 AGPL-3.0 AstrBot 插件，将本地 [Pi](https://github.com/earendil-works/pi) 作为长任务 worker 接入 AstrBot。
 
-通过本插件，你可以在 AstrBot 内管理 pi 会话、用自然语言与 pi 对话、执行 pi 的 slash 命令，甚至让 AstrBot 自己的 LLM 智能体调用 pi 工具。
+它解决的是 AstrBot Agent 会话不适合长时间占用的问题：主模型调用 `pi_agent` 后立即拿到 `task_id`，Pi 在独立进程和独立 session 中继续工作；主模型可以在后续回合通过短调用读取最新快照，同时正常处理当前会话的其他消息。
 
-## 功能特性
+## 重要行为
 
-- 打开、恢复和列出绑定到特定项目目录的 pi 会话。
-- 向 pi 发送自然语言消息并接收流式回复。
-- 执行 pi 的 slash 命令（`/pic <command>`）。
-- 回复 pi 的扩展 UI 请求（`confirm`、`select`、`input`、`editor`）。
-- 将 pi 操作暴露为 AstrBot LLM 工具，支持智能体工作流。
+- **不会等待 Pi 回合结束**：`pi_agent` 只创建任务、保存上下文并排队启动 worker，立即返回结构化结果。
+- **不占用当前 AstrBot 工具调用**：Pi 的 JSONL stdin/stdout 由后台 worker 处理，不把长任务包在一次 AstrBot 工具调用里。
+- **没有硬超时和空闲超时**：插件不会因为任务运行超过 900 秒、某段时间没有输出，或一次观察调用较慢而杀死 Pi。
+- **观察式轮询**：后台 observer 按 `poll_interval_seconds` 请求一次 Pi 状态并保存快照；主模型在自己的后续回合调用 `pi_task_poll`、`pi_task_status` 或 `pi_task_result` 只读取本地最新结果，不等待 Pi 回合或控制确认。
+- **无进展时暂停决策**：连续 `no_meaningful_event_limit` 次没有助手输出、工具状态变化、阶段变化或新 artifact 时，状态变为 `needs_user_decision`。Pi 进程、session、任务快照和 artifact 元数据都保留，不会自动终止。
+- **最新快照优先**：每个任务只保留最新观察结果供主模型读取，不把大量中间事件堆进 AstrBot 会话。
+- **任务彼此隔离**：每个任务有独立进程、Pi session、工作区、事件游标和 registry 记录，同一 AstrBot 会话可同时运行多个 Pi 任务。
+
+Pi 官方 CLI、RPC JSONL 协议和 AstrBot 官方代码均保持原样。本仓库只维护独立适配器和任务桥接层；停用异步桥接后，旧 `/pi`、`/pic` 会话线路仍可用。
+
+## 架构
+
+```text
+AstrBot 主模型
+    │  pi_agent（短调用，立即返回 task_id）
+    ▼
+PiTaskService / ToolRegistry
+    ▼
+TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/session）
+    │                   │
+    └── TaskRegistry ◄──┘  JSONL 事件、游标、快照、artifact
+             │
+             └── pi_task_poll/status/result（短调用）
+```
+
+主要模块：
+
+- `pi_agent_bridge/runtime.py`：选择插件内置 Node/Pi，或显式命令、PATH fallback。
+- `pi_agent_bridge/rpc.py`：公开 Pi RPC 的 JSONL 读写、事件游标、steer、cancel、resume。
+- `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、快照、游标、artifact 和 retention。
+- `pi_agent_bridge/scheduler.py`：并发限制、后台观察、无意义事件计数和重启接管。
+- `pi_agent_bridge/service.py`：给 AstrBot 工具使用的非阻塞任务/session facade。
+- `pi_agent_bridge/context.py`：创建任务时构造人设、当前事件公开字段和原始消息的一次性快照。
+- `pi_agent_bridge/provider.py`：将 AstrBot OpenAI-compatible provider 映射为 Pi 的 worker 配置；密钥只进入子进程环境。
+- `pi_agent_bridge/artifacts.py`：文本、Markdown、JSON、文件和媒体 artifact 的统一描述。
+- `pi_agent_bridge/wakeup.py`：为将来可用的主模型唤醒入口保留适配边界；没有公开唤醒 API 时只持久化快照。
 
 ## 环境要求
 
-- AstrBot v4.x 或更高版本。
-- 本地已安装 `pi` CLI（`npm install -g @earendil-works/pi-coding-agent`）。
-- 为 pi 配置好 LLM 提供商和 API 密钥。
+- AstrBot 4.x 或更高版本。
+- Linux/WSL x64 是首版固定部署目标；runtime adapter 同时处理 Windows/WSL 路径。
+- 首选插件随发行版附带的 Node `22.19.0` 与 Pi `0.84.2` runtime。源码 Git 仓库不提交 Node/Pi 二进制；未安装 runtime release asset 时，必须自行安装 Pi CLI 并确保 `pi` 在 AstrBot 进程的 `PATH` 中。
+- 选择一个 AstrBot provider 并配置可用密钥。首版只接受 OpenAI-compatible provider。
+
+插件不会修改 Pi 官方源码，也不会把 API key 写入 SQLite、任务快照或结构化 envelope。Pi worker 继承 AstrBot 进程的文件和进程权限；请只在可信工作区启用，并在配置页保留这一风险提示。
 
 ## 安装
 
-1. 将插件克隆或复制到 AstrBot 的插件目录：
-
-   ```bash
-   cd /path/to/astrbot/data/plugins
-   git clone <repo-url> astrbot_plugin_piconnector
-   ```
-
-2. 重启 AstrBot 或重新加载插件。
-
-3. 插件会将自己的会话存储创建在 `data/plugin_data/astrbot_plugin_piconnector/sessions` 下。
-
-## 命令
-
-### 会话管理
-
-| 命令 | 说明 |
-|---------|-------------|
-| `/pi open <绝对路径>` | 在指定目录打开新的 pi 会话。 |
-| `/pi sessions [目录]` | 列出目录下的会话；省略目录时使用当前会话所在目录。 |
-| `/pi session` | 显示当前会话信息。 |
-| `/pi info` | `/pi session` 的别名。 |
-| `/pi resume [id]` | 按 id 或部分 id 恢复已有会话；省略 id 时恢复最近会话。 |
-| `/pi tree [编号]` | 将当前会话 active branch 上的用户消息按行编号列出。使用 `/pi tree <编号>` 从该用户消息分岔到一个**新** pi 会话并继续对话。**注意：这不是 pi 原生的 `/tree` 命令；因为 RPC 模式未暴露原生树导航，所以通过 RPC `fork` 模拟实现。** |
-| `/pi abort` | 中止当前 pi 操作。 |
-
-### 对话与 slash 命令
-
-| 命令 | 说明 |
-|---------|-------------|
-| `/pi <文本>` | 向当前 pi 会话发送自然语言消息。 |
-| `/pic <command>` | 执行 pi 的 slash 命令（例如 `/pic opsx-explore`）。 |
-| `/pic help` | 列出可用的 pi slash 命令。 |
-
-### 回复 pi 的 UI 请求
-
-当 pi 提出问题时，使用以下专用命令回复：
-
-| 命令 | 说明 |
-|---------|-------------|
-| `/pi confirm <id> yes\|no` | 回复确认请求。 |
-| `/pi select <id> <选项>` | 通过选项文本或 1-based 编号回复选择请求。 |
-| `/pi input <id> <内容>` | 回复输入请求。 |
-| `/pi edit <id> <文本>` | 回复编辑器请求。 |
-| `/pi cancel <id>` | 取消待处理的 UI 请求。 |
-
-## LLM 工具
-
-当 AstrBot 的智能体模式启用时，本插件会暴露以下工具：
-
-- `pi_open_session(path, name?)`
-- `pi_list_sessions(dir?)`
-- `pi_resume_session(session_id?)`
-- `pi_send_message(message)`
-- `pi_get_session_info()`
-- `pi_run_command(command)`
-- `pi_get_available_commands()`
-- `pi_abort()`
-- `pi_reply_ui(request_id, value)`
-
-面向智能体的使用说明见 `skills/pi-connector/SKILL.md`。
-
-## 使用示例
-
-```text
-/pi open /home/guigui/my-project
-/pi refactor the auth module to use JWT
-/pic opsx-explore
-/pi sessions
-/pi tree            # 列出 active branch 上编号后的用户消息
-/pi tree 3          # 从第 3 条消息分岔，从该点继续对话
-/pi resume          # 恢复最近会话
-/pi resume abc123
+```bash
+cd /path/to/astrbot/data/plugins
+git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plugin_pi_agent
 ```
 
-## 说明
+随后二选一准备运行时：安装本项目对应版本的 runtime release asset，或按照 Pi 官方安装方式安装 Pi CLI 并确认 AstrBot 进程可执行 `pi --version`。重启 AstrBot 或重新加载插件。首次使用异步任务时，插件会在自己的状态目录创建 SQLite WAL registry、sessions、workspaces 和 artifact 元数据。
 
-- 每个 AstrBot 聊天上下文都有独立的 pi 会话。
-- 本插件不会连接到一个已经在运行的 pi TUI 进程。要在 TUI 和 AstrBot 之间切换，请在 TUI 会话保存或暂停后，使用 `/pi resume` 加载同一个会话文件。
-- 确保 `pi` 在 PATH 中，以便插件可以启动 `pi --mode rpc`。
+## 配置
 
-### 关于 `/pi tree`
+配置文件为 `_conf_schema.json`，常用项如下：
 
-本插件中的 `/pi tree` 命令**不是** pi 内置的 `/tree` 命令。pi 原生的 `/tree` 是交互式 TUI 功能，可以让你在会话历史中任意点原地跳转。但 pi 的 **RPC 模式**没有暴露原生的树导航命令（没有 `/tree` 或 `navigateTree` 的 RPC 等价物）。
+| 配置项 | 默认值 | 作用 |
+| --- | ---: | --- |
+| `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
+| `task_require_admin` | `false` | 为 `true` 时仅 AstrBot 管理员可使用异步任务工具；否则按任务 owner 隔离。 |
+| `pi_provider_id` | `""` | 指定 Pi provider；为空时使用当前聊天选中的 provider。 |
+| `pi_model` | `""` | 可选模型覆盖；为空时使用 provider 当前模型。 |
+| `pi_executable` | `""` | 可选的单一 Pi 可执行文件路径；为空时优先插件内置 runtime，再 fallback 到 PATH 的 `pi`。不要填写 `node /path/cli.js` 这样的多段 shell 命令。 |
+| `state_directory` | `""` | 状态根目录；为空使用插件 `.pi`。 |
+| `task_database` | `""` | SQLite 路径；为空使用 `state_directory/tasks.db`。 |
+| `workspace_root` | `""` | 任务工作区根目录；为空使用 `state_directory/workspaces`。 |
+| `poll_interval_seconds` | `60` | 后台观察周期，不是任务超时。 |
+| `no_meaningful_event_limit` | `3` | 连续无意义观察次数，达到后进入 `needs_user_decision`。 |
+| `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和 artifact。活动/暂停/orphaned 任务不被误删。 |
+| `max_concurrent_tasks` | `4` | 同时运行的独立 Pi worker 数量。 |
+| `command_timeout_seconds` | `10` | 仅限制后台 observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；`pi_task_poll` 只读本地快照，不等待 Pi。不是硬超时或空闲超时。 |
+| `inherit_persona` | `true` | 创建时复制主 Agent 人设；任务 prompt 同时保存当前事件的公开字段和原始消息快照。之后不会自动同步新消息。 |
+| `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个任务启动时通过 Pi 公共 CLI 的重复 `--skill <path>` 参数传递。 |
+| `pi_mcp_config_paths` | `[]` | MCP/extension 配置目前不由桥接层承载；只要非空，`pi_agent` 就返回结构化 unsupported envelope，路径不会被假装传给 Pi。 |
 
-为了在不修改 pi 的前提下提供类似功能，`/pi tree` 的工作方式如下：
+### Skill 与 MCP 边界
 
-1. 调用 RPC `get_tree` 命令查看当前会话树。
-2. 从当前 `leafId` 沿 active branch 回溯到根节点，过滤掉非用户消息，将剩余用户消息按行编号显示。
-3. 当你运行 `/pi tree <编号>` 时，将行号解析为对应的 entry id，并调用 RPC `fork` 命令。
-4. `fork` 会从该用户消息创建一个新的 pi 会话，当前 RPC 连接会被重新绑定到新会话，然后你就可以从该点继续对话。
+Pi 官方运行时保持不变。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递；插件不修改 Pi 内部代码，也不把“传入路径”误报成“Skill 已成功加载”，实际加载结果以任务快照或结果为准。MCP 同样不是 Pi `0.84.2` RPC 的内置能力，AstrBot 的 MCP server 列表不会自动继承。当前只要 `pi_mcp_config_paths` 非空，任务创建就返回结构化 unsupported-capability envelope，配置路径不会传给 Pi；主模型应据此二次加工，而不是向用户透出原始异常。
 
-这意味着 `/pi tree <编号>` 会生成一个新的 session 文件，而不是在原 session 中做原地 branch。如果你需要真正的原地树导航，请直接使用 pi 的交互式 TUI（`/tree`）。
+## AstrBot LLM 工具
 
----
+### 异步任务工具
 
-# astrbot_plugin_piconnector
+| 工具 | 作用 |
+| --- | --- |
+| `pi_agent(prompt, workspace?)` | 创建独立长任务，立即返回 `task_id`。 |
+| `pi_task_status(task_id)` | 读取持久化任务状态和最新快照。 |
+| `pi_task_list()` | 列出当前 owner 可见的任务；管理员可见全部任务。 |
+| `pi_task_result(task_id)` | 读取最新快照中的文本/结构化内容，以及已持久化的 artifact。 |
+| `pi_task_poll(task_id)` | 刷新本地事件缓冲并返回最新 envelope；不请求远端 Pi 状态。 |
+| `pi_task_follow_up(task_id, message)` | 使用 Pi steer 向活动任务追加要求。 |
+| `pi_task_resume(task_id)` | 继续 `needs_user_decision` 或可恢复任务。 |
+| `pi_task_cancel(task_id)` | 取消 worker，但保留任务历史。 |
+| `pi_task_delete(task_id)` | 取消并删除任务元数据及任务拥有的资源。 |
+| `pi_session_list()` | 列出可见异步任务对应的 Pi session。 |
+| `pi_session_inspect(task_id)` | 查看任务关联的 session、路径和状态。 |
+| `pi_session_resume(task_id)` | 恢复任务关联的 Pi session。 |
+| `pi_session_delete(task_id)` | 删除任务关联的 session 与资源。 |
+| `pi_artifact_inspect(task_id)` | 查看任务生成的文本、JSON、文件和媒体 artifact。 |
 
-An [AstrBot](https://github.com/AstrBotDevs/AstrBot) plugin that connects your AstrBot instance to a local [pi](https://github.com/earendil-works/pi-mono) coding agent.
+所有异步工具都返回相同的 JSON envelope。成功和失败都交给主模型二次加工：
 
-With this plugin, you can manage pi sessions, chat with pi using natural language, execute pi slash commands, and even let AstrBot's own LLM agent call pi tools — all from within AstrBot.
-
-## Features
-
-- Open, resume, and list pi sessions bound to specific project directories.
-- Send natural language messages to pi and receive streaming responses.
-- Execute pi slash commands (`/pic <command>`).
-- Reply to pi extension UI requests (`confirm`, `select`, `input`, `editor`).
-- Expose pi operations as AstrBot LLM tools for agentic workflows.
-
-## Requirements
-
-- AstrBot v4.x or later.
-- `pi` CLI installed locally (`npm install -g @earendil-works/pi-coding-agent`).
-- A configured LLM provider and API key for pi.
-
-## Installation
-
-1. Clone or copy this plugin into AstrBot's plugin directory:
-
-   ```bash
-   cd /path/to/astrbot/data/plugins
-   git clone <repo-url> astrbot_plugin_piconnector
-   ```
-
-2. Restart AstrBot or reload the plugin.
-
-3. The plugin will create its session storage under `data/plugin_data/astrbot_plugin_piconnector/sessions`.
-
-## Commands
-
-### Session management
-
-| Command | Description |
-|---------|-------------|
-| `/pi open <absolute path>` | Open a new pi session at the given directory. |
-| `/pi sessions [dir]` | List sessions in a directory. Uses the active session's directory if omitted. |
-| `/pi session` | Show current session info. |
-| `/pi info` | Alias for `/pi session`. |
-| `/pi resume [id]` | Resume an existing session by its id or partial id. Omit id to resume the most recent session. |
-| `/pi tree [number]` | View user-only messages on the active branch as numbered lines. Use `/pi tree <number>` to fork from that user message into a **new** pi session and continue from there. This is **not** pi's native `/tree`; it is emulated via RPC `fork` because RPC mode does not expose native tree navigation. |
-| `/pi abort` | Abort the current pi operation. |
-
-### Chat and slash commands
-
-| Command | Description |
-|---------|-------------|
-| `/pi <text>` | Send a natural language message to the current pi session. |
-| `/pic <command>` | Execute a pi slash command (e.g., `/pic opsx-explore`). |
-| `/pic help` | List available pi slash commands. |
-
-### Replying to pi UI requests
-
-When pi asks a question, reply with one of these dedicated commands:
-
-| Command | Description |
-|---------|-------------|
-| `/pi confirm <id> yes\|no` | Reply to a confirm request. |
-| `/pi select <id> <option>` | Reply to a select request by option text or 1-based number. |
-| `/pi input <id> <value>` | Reply to an input request. |
-| `/pi edit <id> <text>` | Reply to an editor request. |
-| `/pi cancel <id>` | Cancel a pending UI request. |
-
-## LLM tools
-
-When AstrBot's agent mode is active, the plugin exposes the following tools:
-
-- `pi_open_session(path, name?)`
-- `pi_list_sessions(dir?)`
-- `pi_resume_session(session_id?)`
-- `pi_send_message(message)`
-- `pi_get_session_info()`
-- `pi_run_command(command)`
-- `pi_get_available_commands()`
-- `pi_abort()`
-- `pi_reply_ui(request_id, value)`
-
-See `skills/pi-connector/SKILL.md` for the agent-facing instructions.
-
-## Example usage
-
-```text
-/pi open /home/guigui/my-project
-/pi refactor the auth module to use JWT
-/pic opsx-explore
-/pi sessions
-/pi tree            # list numbered user messages on the active branch
-/pi tree 3          # fork from message #3 and continue from that point
-/pi resume          # resume most recent session
-/pi resume abc123
+```json
+{
+  "schema_version": "1",
+  "ok": true,
+  "operation": "task_poll",
+  "task_id": "task-...",
+  "status": "running",
+  "has_new_meaningful_event": true,
+  "progress": {},
+  "content": [],
+  "artifacts": [],
+  "error": null
+}
 ```
 
-## Notes
+### 任务分工建议
 
-- Each AstrBot chat context has its own isolated pi session.
-- The plugin does not connect to an already-running pi TUI process. To switch between TUI and AstrBot, use `/pi resume` to load the same session file after the TUI session is saved or paused.
-- Make sure `pi` is on your PATH so the plugin can spawn `pi --mode rpc`.
+主模型应把普通问答、简单改写和一次短工具调用留在 AstrBot 自己的 Agent。以下情况适合使用 `pi_agent`：
 
-### About `/pi tree`
+- 需要多步研究、编码、测试或文件修改；
+- 预计超过一次工具调用，或需要独立工作区；
+- 需要并行的独立子任务；
+- 用户明确要求后台持续执行。
 
-The `/pi tree` command in this plugin is **not** pi's built-in `/tree` command. pi's native `/tree` is an interactive TUI feature that lets you jump to any point in the session history in-place. However, pi's **RPC mode** does not expose a native tree-navigation command (there is no RPC equivalent of `/tree` or `navigateTree`).
+调用后不要在同一次回合等待 Pi 完成。下一次主模型回合读取 `pi_task_poll`；这是一次只读本地事件缓冲和持久化快照的短调用，不等待 Pi，也不会把长任务重新包进 AstrBot 工具调用。远端 Pi 状态由后台 observer 按 `poll_interval_seconds` 请求，`command_timeout_seconds` 只约束该状态请求以及 steer/cancel/resume 等短控制确认。若返回 `needs_user_decision`，向用户说明“暂时没有新进展”，再由用户决定继续、追加要求、查看、取消或删除。主模型正在处理其他消息时，快照只在 registry 中保留最新值，不会阻塞会话。
 
-To provide similar functionality without modifying pi itself, `/pi tree` works as follows:
+### 旧会话工具与命令
 
-1. It calls the RPC `get_tree` command to inspect the current session tree.
-2. It walks the active branch from the current `leafId` back to the root, filters out non-user messages, and displays the remaining user messages as numbered lines.
-3. When you run `/pi tree <number>`, it resolves the line number to the corresponding entry id and invokes the RPC `fork` command.
-4. `fork` creates a **new** pi session starting from that user message. The current RPC connection is rebound to the new session, and you continue chatting from that point.
+旧的同步会话工具和命令仍保留，用于兼容已有工作流：`pi_open_session`、`pi_list_sessions`、`pi_resume_session`、`pi_send_message`、`pi_get_session_info`、`pi_run_command`、`pi_get_available_commands`、`pi_abort`、`pi_reply_ui`，以及 `/pi`、`/pic` 命令。它们与新的 `pi_agent` 任务模型是两条独立线路。
 
-This means `/pi tree <number>` produces a new session file rather than performing an in-place branch inside the original session. If you need true in-place tree navigation, you must use pi's interactive TUI (`/tree`) directly.
+## 旧命令示例
+
+```text
+/pi open /home/user/project
+/pi sessions
+/pi resume
+/pi refactor the auth module
+/pic help
+```
+
+## 恢复、保留和删除
+
+AstrBot 重启时会尝试重新接管仍存活的 worker。标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，不会重复启动第二个写入进程；只有显式 `pi_task_resume` 或 `pi_session_resume` 才会从 session 文件恢复。删除操作会取消任务、删除 registry 元数据，并按任务资源策略清理受插件管理的 session、工作区、agent 配置目录和 artifact 元数据。
+
+## 开发与验证
+
+```bash
+python -m pytest -q
+ruff check main.py pi_agent_bridge pi_connector tests
+python -m compileall -q main.py pi_agent_bridge pi_connector
+git diff --check
+```
+
+本项目是独立 fork。请不要把改动推送到上游 Pi 或 AstrBot 仓库；发布时推送到个人 `astrbot_plugin_pi_agent` 仓库。

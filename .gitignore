@@ -209,5 +209,15 @@ __marimo__/
 # AstrBot runtime data
 data/
 
+# Pi Agent Bridge runtime state. Keep the tracked .pi prompts and skills;
+# only ignore task data that may contain session history, workspace files, or
+# provider-generated configuration.
+/.pi/tasks.db
+/.pi/tasks.db-*
+/.pi/sessions/
+/.pi/workspaces/
+/.pi/agents/
+/.pi/artifacts/
+
 # Codegraph index
 .codegraph/

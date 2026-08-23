@@ -1,5 +1,8 @@
+import json
+import inspect
 import sys
 from pathlib import Path
+from typing import Any
 
 # Ensure the sibling `pi_connector` package is importable when AstrBot loads
 # this file directly as a standalone module.
@@ -18,6 +21,26 @@ from pi_connector.commands import (
     resolve_select_option,
     resolve_tree_entry_id,
     strip_command_prefix,
+)
+from pi_agent_bridge import (
+    AstrBotAdapter,
+    AstrBotContextAdapter,
+    PiTaskService,
+    TaskScheduler,
+    TaskRegistry,
+    capture_task_context,
+)
+from pi_agent_bridge.provider import (
+    PiProviderError,
+    build_provider_binding,
+    resolve_provider_id,
+)
+from pi_agent_bridge.runtime import PiRuntimeAdapter
+from pi_agent_bridge.security import safe_error_summary
+from pi_agent_bridge.worker import (
+    PiWorkerConfig,
+    WORKER_DESCRIPTOR_KEY,
+    validate_resource_paths,
 )
 
 from astrbot.api import logger
@@ -60,24 +83,215 @@ USAGE = """Pi Connector 命令帮助
 class PiConnectorPlugin(Star):
     """Connect AstrBot to a local pi agent for session management, chat, and code tasks."""
 
-    def __init__(self, context: Context):
-        super().__init__(context)
+    def __init__(self, context: Context, config=None):
+        try:
+            super().__init__(context, config=config)
+        except TypeError:
+            # Keep standalone test doubles and older AstrBot Star bases working.
+            super().__init__(context)
+        self.plugin_config = config if config is not None else {}
+        self.astrbot_adapter = AstrBotAdapter(context, self.plugin_config)
+        self.astrbot_context_adapter = AstrBotContextAdapter(
+            context,
+            media_timeout_seconds=float(
+                self._config_value("media_capture_timeout_seconds", 10.0)
+            ),
+        )
         # Use pi's native session directory so sessions are shared with the
         # pi CLI and any other pi clients. This can be made configurable later
         # if per-plugin isolation is desired.
         self.pi_connection_manager = PiConnectionManager(
-            session_dir=None,
-            executable="pi",
+            session_dir=self._config_value("pi_session_dir", None) or None,
+            executable=self._config_value("pi_executable", "") or "pi",
         )
+        self.pi_task_service: PiTaskService | None = None
+        self.pi_task_scheduler: TaskScheduler | None = None
+        self._task_registry: TaskRegistry | None = None
+        self._task_service_lock = None
         logger.info("PiConnector initialized")
 
     async def initialize(self):
         """Async initialization hook called after the Star is instantiated."""
+        if self._config_bool("enable_async_tasks", True):
+            await self._ensure_task_service()
         logger.info("PiConnector plugin initialized.")
 
     async def terminate(self):
         """Terminate all managed pi connections when the plugin is unloaded."""
+        if self.pi_task_service is not None:
+            await self.pi_task_service.shutdown()
+            self.pi_task_service = None
+        if self.pi_task_scheduler is not None:
+            await self.pi_task_scheduler.shutdown()
+            self.pi_task_scheduler = None
+        if self._task_registry is not None:
+            self._task_registry.close()
+            self._task_registry = None
         await self.pi_connection_manager.terminate_all()
+
+    def _config_value(self, key: str, default):
+        getter = getattr(self.plugin_config, "get", None)
+        return getter(key, default) if callable(getter) else default
+
+    def _config_bool(self, key: str, default: bool) -> bool:
+        """Normalize bool config values supplied as native values or strings."""
+        value = self._config_value(key, default)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off", ""}:
+                return False
+        return bool(value)
+
+    async def _ensure_task_service(self) -> PiTaskService:
+        """Create the background bridge lazily and start its observer."""
+        if self.pi_task_service is not None:
+            return self.pi_task_service
+
+        # Import lazily so plugin construction stays compatible with hosts
+        # that instantiate plugins outside an active event loop.
+        import asyncio
+
+        if self._task_service_lock is None:
+            self._task_service_lock = asyncio.Lock()
+        async with self._task_service_lock:
+            if self.pi_task_service is not None:
+                return self.pi_task_service
+            return await self._create_task_service()
+
+    async def _create_task_service(self) -> PiTaskService:
+        """Build and publish one registry/scheduler/service triplet."""
+
+        configured_state = self._config_value("state_directory", "")
+        state_root = (
+            Path(configured_state).expanduser()
+            if configured_state
+            else self._default_state_root()
+        )
+        state_root.mkdir(parents=True, exist_ok=True)
+
+        database = self._config_value("task_database", "")
+        if not database:
+            database = str(state_root / "tasks.db")
+        registry = TaskRegistry(database)
+        workspace_root = self._config_value("workspace_root", "")
+        if not workspace_root:
+            workspace_root = str(state_root / "workspaces")
+
+        configured_command = self._config_value("pi_executable", "") or None
+        runtime_adapter = PiRuntimeAdapter(
+            plugin_root=Path(__file__).parent,
+            configured_command=configured_command,
+        )
+        agent_root = state_root / "agents"
+        configured_provider_id = (
+            self._config_value("pi_provider_id", "")
+            or self._config_value("pi_provider", "")
+            or ""
+        )
+        configured_model = self._config_value("pi_model", "") or None
+        # Resource paths are validated lazily when a worker is actually
+        # launched. A bad optional path must fail that task structurally, not
+        # prevent AstrBot from loading the plugin or handling normal chat.
+        configured_skill_paths = self._config_value("pi_skill_paths", [])
+
+        def configured_skill_paths_for_worker() -> tuple[str, ...]:
+            return validate_resource_paths(
+                configured_skill_paths,
+                label="pi_skill_paths",
+                require_exists=True,
+            )
+
+        async def worker_config_factory(task) -> PiWorkerConfig:
+            descriptor = task.context.get(WORKER_DESCRIPTOR_KEY, {})
+            if not isinstance(descriptor, dict):
+                raise PiProviderError("Pi task provider descriptor is invalid")
+            source_id = str(descriptor.get("source_provider_id") or "").strip()
+            if not source_id:
+                # Keep old task rows and lightweight host test doubles usable.
+                # New AstrBot tasks always carry a source provider descriptor.
+                return PiWorkerConfig(
+                    provider=configured_provider_id or None,
+                    model=configured_model,
+                    skill_paths=configured_skill_paths_for_worker(),
+                )
+            getter = getattr(self.astrbot_adapter.context, "get_provider_by_id", None)
+            if not callable(getter):
+                raise PiProviderError("AstrBot provider lookup API is unavailable")
+            provider = getter(source_id)
+            if inspect.isawaitable(provider):
+                provider = await provider
+            if provider is None:
+                raise PiProviderError(f"AstrBot provider {source_id!r} is unavailable")
+            agent_dir = agent_root / task.task_id
+            binding = build_provider_binding(
+                provider_id=source_id,
+                provider=provider,
+                agent_dir=agent_dir,
+                model_override=descriptor.get("model_override"),
+            )
+            return PiWorkerConfig(
+                provider=binding.pi_provider_id,
+                model=binding.model,
+                environment=binding.environment,
+                agent_dir=binding.agent_dir,
+                skill_paths=configured_skill_paths_for_worker(),
+            )
+
+        try:
+            scheduler = TaskScheduler(
+                registry,
+                workspace_root=workspace_root,
+                executable=configured_command or "pi",
+                runtime_adapter=runtime_adapter,
+                agent_root=agent_root,
+                worker_config_factory=worker_config_factory,
+                poll_interval_seconds=int(
+                    self._config_value("poll_interval_seconds", 60)
+                ),
+                no_meaningful_event_limit=int(
+                    self._config_value("no_meaningful_event_limit", 3)
+                ),
+                max_concurrent_tasks=int(
+                    self._config_value("max_concurrent_tasks", 4)
+                ),
+                command_timeout=float(
+                    self._config_value("command_timeout_seconds", 10.0)
+                ),
+                session_retention_hours=float(
+                    self._config_value("session_retention_hours", 24)
+                ),
+                session_root=state_root / "sessions",
+            )
+            await scheduler.start()
+        except Exception:
+            registry.close()
+            raise
+        self._task_registry = registry
+        self.pi_task_scheduler = scheduler
+        self.pi_task_service = PiTaskService(registry, scheduler)
+        return self.pi_task_service
+
+    @staticmethod
+    def _default_state_root() -> Path:
+        """Use AstrBot's plugin-data directory, never the source checkout."""
+
+        try:
+            from astrbot.api.star import StarTools
+
+            getter = getattr(StarTools, "get_data_dir", None)
+            if callable(getter):
+                return Path(getter("astrbot_plugin_pi_agent"))
+        except Exception:  # noqa: BLE001
+            # Standalone tests and older hosts may not expose StarTools yet.
+            pass
+        return Path(__file__).with_name(".pi")
+
+    async def _task_service_or_error(self) -> PiTaskService:
+        if not self._config_bool("enable_async_tasks", True):
+            raise RuntimeError("Pi task bridge is disabled in plugin configuration")
+        return await self._ensure_task_service()
 
     # ------------------------------------------------------------------
     # Permission check
@@ -88,6 +302,101 @@ class PiConnectorPlugin(Star):
         if not event.is_admin():
             return "Permission denied. Pi Connector is only available to AstrBot administrators."
         return None
+
+    def _require_task_permission(self, event: AstrMessageEvent) -> str | None:
+        """Apply the configurable guard to Pi background task tools."""
+        if self._config_bool("task_require_admin", False):
+            return self._require_admin(event)
+        return None
+
+    def _task_owner_key(self, event: AstrMessageEvent) -> str:
+        return capture_task_context(event).owner_key
+
+    def _task_is_visible(self, event: AstrMessageEvent, task) -> bool:
+        return task.owner_key == self._task_owner_key(event) or event.is_admin()
+
+    @staticmethod
+    def _bridge_error(
+        operation: str,
+        message: str,
+        *,
+        task_id: str | None = None,
+    ) -> str:
+        """Serialize bridge failures for the calling model, never for users."""
+
+        return json.dumps(
+            {
+                "schema_version": "1",
+                "ok": False,
+                "operation": operation,
+                "task_id": task_id,
+                "status": None,
+                "has_new_meaningful_event": False,
+                "progress": {},
+                "content": [],
+                "artifacts": [],
+                "error": {
+                    "type": "pi_task_error",
+                    "message": safe_error_summary(message),
+                },
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _bridge_dump(result: dict[str, Any]) -> str:
+        return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+
+    def _visible_task(self, event: AstrMessageEvent, task_id: str):
+        """Return a task only when the caller owns it or is an administrator."""
+
+        if self._task_registry is None:
+            return None
+        try:
+            task = self._task_registry.get_task(task_id)
+        except Exception:  # noqa: BLE001
+            return None
+        return task if self._task_is_visible(event, task) else None
+
+    async def _service_for_task(
+        self, event: AstrMessageEvent, task_id: str
+    ) -> PiTaskService:
+        """Load the bridge before enforcing task visibility.
+
+        Lazy initialization means the registry is unavailable until the first
+        tool call. Keeping initialization and authorization together prevents
+        disabled-bridge calls from being misreported as missing tasks.
+        """
+
+        service = await self._task_service_or_error()
+        if self._visible_task(event, task_id) is None:
+            raise LookupError("task not found")
+        return service
+
+    def _current_persona(self, event: AstrMessageEvent) -> str | None:
+        """Best-effort persona snapshot using the public context/config surface."""
+
+        context = self.astrbot_adapter.context
+        manager = getattr(context, "persona_manager", None)
+        if manager is None:
+            return None
+        try:
+            umo = getattr(event, "unified_msg_origin", "")
+            if callable(umo):
+                umo = umo()
+            config = context.get_config(umo=umo) if umo else context.get_config()
+            settings = config.get("provider_settings", {}) if config else {}
+            persona_id = settings.get("default_personality")
+            getter = getattr(manager, "get_persona_v3_by_id", None)
+            persona = getter(persona_id) if callable(getter) else None
+            if isinstance(persona, dict):
+                prompt = persona.get("prompt")
+            else:
+                prompt = getattr(persona, "prompt", None)
+            return prompt.strip() if isinstance(prompt, str) and prompt.strip() else None
+        except Exception:  # noqa: BLE001
+            return None
 
     # ------------------------------------------------------------------
     # Command parsing helpers
@@ -557,6 +866,326 @@ class PiConnectorPlugin(Star):
     # ------------------------------------------------------------------
     # LLM tools
     # ------------------------------------------------------------------
+
+    @filter.llm_tool(name="pi_agent")
+    async def pi_agent(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        workspace: str = "",
+    ) -> str:
+        """Delegate a long-running, multi-step task to an isolated Pi worker.
+
+        Use this for sustained research, coding, multi-agent work, or tasks
+        that should continue while the main conversation handles other turns.
+        The call returns immediately with a task id; use the task tools to
+        observe it. Simple questions and short tool calls belong to AstrBot.
+
+        Args:
+            prompt(string): Complete task instruction for the delegated worker
+            workspace(string): Optional absolute workspace path for the task
+        """
+        operation = "task_create"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied)
+        try:
+            service = await self._task_service_or_error()
+            context = capture_task_context(event)
+            mcp_paths = self._config_value("pi_mcp_config_paths", [])
+            if mcp_paths:
+                return self._bridge_error(
+                    operation,
+                    "Pi MCP integration is unsupported by the bundled Pi RPC bridge; "
+                    "configure a separately maintained Pi extension first",
+                )
+            descriptor: dict[str, Any] = {}
+            context_api = self.astrbot_adapter.context
+            provider_getter = getattr(context_api, "get_current_chat_provider_id", None)
+            if configured_provider_id := (
+                self._config_value("pi_provider_id", "")
+                or self._config_value("pi_provider", "")
+                or ""
+            ):
+                provider_id = await resolve_provider_id(
+                    context_api,
+                    configured_provider_id,
+                    context.session_origin,
+                )
+                descriptor = {
+                    "source_provider_id": provider_id,
+                    "model_override": self._config_value("pi_model", "") or None,
+                }
+            elif callable(provider_getter):
+                provider_id = await resolve_provider_id(
+                    context_api,
+                    None,
+                    context.session_origin,
+                )
+                descriptor = {
+                    "source_provider_id": provider_id,
+                    "model_override": self._config_value("pi_model", "") or None,
+                }
+
+            # Capture the full context only after ``PiTaskService`` has chosen
+            # the final task workspace.  This keeps event-owned media alive
+            # after AstrBot's pipeline disposes its temporary files while
+            # still returning immediately from the model tool call.
+            initial_context = context
+            initial_context_data = initial_context.as_dict()
+            if descriptor:
+                # Persist the secret-free provider selection before the
+                # asynchronous capture callback runs.  The callback repeats
+                # it on the richer snapshot so both launch paths agree.
+                initial_context_data[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
+            inherit_persona = self._config_bool("inherit_persona", True)
+            # Keep test doubles and host integrations that replace the public
+            # context object after plugin construction aligned with capture.
+            self.astrbot_context_adapter.context = context_api
+
+            async def prepare_context(_task_id: str, task_workspace: Path):
+                captured = await self.astrbot_context_adapter.capture(
+                    event,
+                    workspace=task_workspace,
+                    inherit_persona=inherit_persona,
+                )
+                prepared = captured.as_dict()
+                if descriptor:
+                    prepared[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
+                return prepared
+
+            result = await service.create_task(
+                owner_key=initial_context.owner_key,
+                task=prompt,
+                context=initial_context_data,
+                persona=None,
+                media_references=[],
+                workspace=workspace or None,
+                prepare_context=prepare_context,
+            )
+            return self._bridge_dump(result)
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc))
+
+    @filter.llm_tool(name="pi_task_status")
+    async def pi_task_status(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Read the latest durable state and snapshot for a Pi task.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "task_status"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(service.status(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_list")
+    async def pi_task_list(self, event: AstrMessageEvent) -> str:
+        """List Pi tasks visible to this conversation owner.
+
+        Administrators receive all tasks; other callers receive their own.
+        """
+        operation = "task_list"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied)
+        try:
+            service = await self._task_service_or_error()
+            owner = None if event.is_admin() else self._task_owner_key(event)
+            return self._bridge_dump(service.list_tasks(owner_key=owner))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc))
+
+    @filter.llm_tool(name="pi_task_result")
+    async def pi_task_result(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Read the accumulated result content and artifacts for a task.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "task_result"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(service.result(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_poll")
+    async def pi_task_poll(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Take one short, nonblocking observation of a Pi task.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "task_poll"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(await service.poll(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_follow_up")
+    async def pi_task_follow_up(
+        self, event: AstrMessageEvent, task_id: str, message: str
+    ) -> str:
+        """Inject an additional requirement into the active Pi task.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+            message(string): Additional instruction to steer the worker
+        """
+        operation = "task_follow_up"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(await service.follow_up(task_id, message))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_resume")
+    async def pi_task_resume(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Resume a task paused after repeated empty observations.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "task_resume"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(await service.resume(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_cancel")
+    async def pi_task_cancel(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Cancel a Pi task without deleting its durable history.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "task_cancel"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(await service.cancel(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_delete")
+    async def pi_task_delete(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Cancel and delete a Pi task, metadata, and managed workspace.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "task_delete"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(await service.delete(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_session_list")
+    async def pi_session_list(self, event: AstrMessageEvent) -> str:
+        """List Pi sessions represented by visible background tasks."""
+        operation = "session_list"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied)
+        try:
+            service = await self._task_service_or_error()
+            owner = None if event.is_admin() else self._task_owner_key(event)
+            return self._bridge_dump(service.session_list(owner_key=owner))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc))
+
+    @filter.llm_tool(name="pi_session_inspect")
+    async def pi_session_inspect(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Inspect the Pi session associated with a task.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "session_inspect"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(service.session_inspect(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_session_resume")
+    async def pi_session_resume(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Resume the Pi session for a paused or orphaned task.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "session_resume"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(await service.session_resume(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_session_delete")
+    async def pi_session_delete(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Delete the Pi session and its task-owned resources.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "session_delete"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(await service.session_delete(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_artifact_inspect")
+    async def pi_artifact_inspect(self, event: AstrMessageEvent, task_id: str) -> str:
+        """Inspect text, structured, and media artifacts produced by a task.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+        """
+        operation = "artifact_inspect"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(service.artifact_inspect(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    # Backwards-compatible alias for older prompts and skills.
+    @filter.llm_tool(name="pi_submit_task")
+    async def pi_submit_task(
+        self, event: AstrMessageEvent, prompt: str, workspace: str = ""
+    ) -> str:
+        """Deprecated alias for pi_agent.
+
+        Args:
+            prompt(string): Complete task instruction for Pi
+            workspace(string): Optional absolute workspace path for the task
+        """
+        return await self.pi_agent(event, prompt, workspace)
 
     @filter.llm_tool(name="pi_open_session")
     async def pi_open_session(
