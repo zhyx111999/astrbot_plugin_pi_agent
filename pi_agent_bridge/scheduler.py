@@ -623,6 +623,10 @@ class TaskScheduler:
         snapshot["phase"] = _phase(events, snapshot)
         finished = _agent_finished(events)
         failed = _worker_failed(events, snapshot)
+        if failed:
+            snapshot["phase"] = "failed"
+        elif finished:
+            snapshot["phase"] = "completed"
         cursor = str(getattr(adapter, "event_cursor", task.event_cursor or "0"))
         updated, _, _ = self.registry.record_snapshot(
             task_id,

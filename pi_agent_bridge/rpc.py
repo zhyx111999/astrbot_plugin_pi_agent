@@ -179,6 +179,8 @@ _CHILD_ENVIRONMENT_KEYS = frozenset(
     }
 )
 
+_RPC_STREAM_LIMIT = 16 * 1024 * 1024
+
 
 def _child_environment() -> dict[str, str]:
     """Select process essentials without exposing host provider credentials."""
@@ -280,6 +282,7 @@ class PiRpcAdapter:
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             env=env,
+            limit=_RPC_STREAM_LIMIT,
         )
 
     @property

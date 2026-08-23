@@ -451,6 +451,10 @@ def _content_blocks(events: Any, *, include_all: bool) -> list[dict[str, Any]]:
                 error = message.get("errorMessage") or "Pi agent turn failed"
                 blocks.append({"type": "error", "text": str(error)})
                 continue
-        elif include_all and payload.get("type") in {"agent_end", "tool_end", "artifact"}:
+        if payload.get("type") in {"rpc_error", "error"}:
+            error = payload.get("message") or payload.get("error") or "Pi RPC failed"
+            blocks.append({"type": "error", "text": str(error)})
+            continue
+        if include_all and payload.get("type") in {"agent_end", "tool_end", "artifact"}:
             blocks.append({"type": "event", "event": payload})
     return blocks
