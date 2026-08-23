@@ -94,7 +94,6 @@ def build_provider_binding(
         "PI_ASTRBOT_API_KEY": _provider_key(provider),
         "PI_CODING_AGENT_DIR": str(path),
     }
-    headers = _header_refs(config, environment)
     entry: dict[str, Any] = {
         "baseUrl": _safe_base_url(
             _first_string(config, "api_base", "base_url", "baseUrl")
@@ -104,8 +103,14 @@ def build_provider_binding(
         if provider_type.strip().lower() in _RESPONSES_TYPES
         else "openai-completions",
         "apiKey": "$PI_ASTRBOT_API_KEY",
-        "models": [{"id": model}],
+        "models": [_build_model_entry(
+            model=model,
+            provider=provider,
+            meta=meta,
+            config=config,
+        )],
     }
+    headers = _header_refs(config, environment)
     if headers:
         entry["headers"] = headers
     write_models_json(path, pi_provider_id, entry)
@@ -153,6 +158,113 @@ def write_models_json(agent_dir: Path, provider_id: str, entry: Mapping[str, Any
     return target
 
 
+def _build_model_entry(
+    *,
+    model: str,
+    provider: Any,
+    meta: Any,
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Map AstrBot's public provider/model values to Pi model metadata.
+
+    Missing values are intentionally omitted so Pi applies its own defaults;
+    AstrBot's unset modalities retain its backward-compatible text/image input
+    behavior because Pi does not support audio or video model inputs.
+    """
+
+    entry: dict[str, Any] = {"id": model}
+    modalities = config.get("modalities")
+    if modalities is None or modalities == []:
+        supported_modalities = {"text", "image"}
+    elif isinstance(modalities, list):
+        supported_modalities = {str(item).strip().lower() for item in modalities}
+    else:
+        supported_modalities = {"text"}
+    input_types = ["text"]
+    if "image" in supported_modalities:
+        input_types.append("image")
+    entry["input"] = input_types
+
+    extra_body = config.get("custom_extra_body")
+    if isinstance(extra_body, Mapping) and extra_body:
+        sampling_params = _json_mapping(extra_body)
+        if sampling_params:
+            entry["samplingParams"] = sampling_params
+        max_tokens = _positive_int(
+            extra_body.get("max_tokens") or extra_body.get("max_output_tokens")
+        )
+        if max_tokens is not None:
+            entry["maxTokens"] = max_tokens
+        if extra_body.get("reasoning_effort"):
+            entry["reasoning"] = True
+
+    reasoning = config.get("reasoning", getattr(meta, "reasoning", None))
+    if isinstance(reasoning, bool):
+        entry["reasoning"] = reasoning
+
+    metadata = getattr(meta, "model_metadata", None) or getattr(meta, "metadata", None)
+    if isinstance(metadata, Mapping):
+        metadata = metadata.get(model, metadata)
+    if isinstance(metadata, Mapping):
+        if isinstance(metadata.get("modalities"), Mapping):
+            metadata_input = metadata["modalities"].get("input")
+            if isinstance(metadata_input, list):
+                entry["input"] = [
+                    item for item in ("text", "image") if item in metadata_input
+                ] or ["text"]
+        if isinstance(metadata.get("reasoning"), bool):
+            entry["reasoning"] = metadata["reasoning"]
+        limit = metadata.get("limit")
+        if isinstance(limit, Mapping):
+            context = _positive_int(limit.get("context"))
+            output = _positive_int(limit.get("output"))
+            if context is not None:
+                entry["contextWindow"] = context
+            if output is not None:
+                entry["maxTokens"] = output
+        for source, target in (
+            ("contextWindow", "contextWindow"),
+            ("maxTokens", "maxTokens"),
+            ("max_tokens", "maxTokens"),
+        ):
+            value = _positive_int(metadata.get(source))
+            if value is not None:
+                entry[target] = value
+
+    context_window = _positive_int(
+        config.get("max_context_tokens")
+        or config.get("context_window")
+        or config.get("contextWindow")
+    )
+    if context_window is not None:
+        entry["contextWindow"] = context_window
+
+    for key in ("cost", "compat"):
+        value = config.get(key)
+        if isinstance(value, Mapping) and value:
+            entry[key] = _json_mapping(value)
+    return entry
+
+
+def _json_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        try:
+            json.dumps(item)
+        except (TypeError, ValueError):
+            continue
+        result[str(key)] = item
+    return result
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 def _provider_config(provider: Any) -> Mapping[str, Any]:
     try:
         value = getattr(provider, "provider_config", None)

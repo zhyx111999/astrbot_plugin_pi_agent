@@ -20,6 +20,15 @@ class OpenAICompatibleProvider:
         "type": "openai_chat_completion",
         "api_base": "https://gateway.example/v1",
         "custom_headers": {"X-Workspace": "tenant-secret"},
+        "modalities": ["text", "image", "tool_use"],
+        "max_context_tokens": 64000,
+        "custom_extra_body": {
+            "temperature": 0.2,
+            "reasoning_effort": "high",
+            "max_tokens": 4096,
+        },
+        "cost": {"input": 1, "output": 2},
+        "compat": {"supportsDeveloperRole": False},
     }
 
     def meta(self):
@@ -39,13 +48,24 @@ def test_binding_writes_only_variable_references(tmp_path):
     models = (tmp_path / "agent" / "models.json").read_text(encoding="utf-8")
     payload = json.loads(models)
     entry = payload["providers"][binding.pi_provider_id]
+    model_entry = entry["models"][0]
     assert binding.model == "gpt-test"
     assert binding.environment["PI_ASTRBOT_API_KEY"] == "api-secret"
     assert binding.environment["PI_CODING_AGENT_DIR"] == str(
         (tmp_path / "agent").resolve()
     )
     assert entry["apiKey"] == "$PI_ASTRBOT_API_KEY"
-    assert entry["headers"]["X-Workspace"] == "$PI_ASTRBOT_HEADER_X_WORKSPACE"
+    assert model_entry["input"] == ["text", "image"]
+    assert model_entry["contextWindow"] == 64000
+    assert model_entry["maxTokens"] == 4096
+    assert model_entry["reasoning"] is True
+    assert model_entry["samplingParams"] == {
+        "temperature": 0.2,
+        "reasoning_effort": "high",
+        "max_tokens": 4096,
+    }
+    assert model_entry["cost"] == {"input": 1, "output": 2}
+    assert model_entry["compat"] == {"supportsDeveloperRole": False}
     assert "api-secret" not in models
     assert "tenant-secret" not in models
 

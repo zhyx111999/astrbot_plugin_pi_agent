@@ -50,7 +50,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - 首选插件随发行版附带的 Node `22.19.0` 与 Pi `0.84.2` runtime。源码 Git 仓库不提交 Node/Pi 二进制；未安装 runtime release asset 时，必须自行安装 Pi CLI 并确保 `pi` 在 AstrBot 进程的 `PATH` 中。
 - 选择一个 AstrBot provider 并配置可用密钥。首版只接受 OpenAI-compatible provider。
 
-插件不会修改 Pi 官方源码，也不会把 API key 写入 SQLite、任务快照或结构化 envelope。Pi worker 继承 AstrBot 进程的文件和进程权限；请只在可信工作区启用，并在配置页保留这一风险提示。
+后台 Pi 会读取所选 AstrBot Provider 的模型配置，并映射到任务专属的 Pi `models.json`：模型能力模态、推理标记、上下文上限、输出上限、自定义请求体、成本和兼容参数都会尽量保持一致。AstrBot 未配置的字段不会被插件硬编码覆盖，而是交给 Pi 的默认值；API key、鉴权头等敏感值只通过任务工作进程环境传递，不写入任务数据库或快照。
 
 ## 安装
 
