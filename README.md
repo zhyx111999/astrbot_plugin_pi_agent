@@ -79,12 +79,13 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和 artifact。活动/暂停/orphaned 任务不被误删。 |
 | `max_concurrent_tasks` | `4` | 同时运行的独立 Pi worker 数量。 |
 | `command_timeout_seconds` | `10` | 仅限制后台 observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；`pi_task_poll` 只读本地快照，不等待 Pi。不是硬超时或空闲超时。 |
+| `notify_task_completion` | `true` | 任务完成、失败、取消或需要用户决定时向任务所属会话发送一次简短通知；运行中不发送中间进度。 |
 | `inherit_persona` | `true` | 创建时复制主 Agent 人设；任务 prompt 同时保存当前事件的公开字段和原始消息快照。之后不会自动同步新消息。 |
 | `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个路径单独一项，填写包含 `SKILL.md` 的目录绝对路径。 |
 | `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
 | `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |
 
-### Skill、扩展与 MCP 边界
+`pi_task_status` 只返回状态和快照元数据，不重复输出 Pi 的中间文本；`pi_task_poll` 只在发现新的持久化快照时返回新增内容，重复调用不会重复汇报同一段进度。完整结果和内容使用 `pi_task_result` 查看。后台观察器仍按 `poll_interval_seconds` 执行远端状态检查，运行中的观察不会主动向聊天发送消息；只有完成、失败、取消或进入 `needs_user_decision` 时才发送一次简短通知，可通过 `notify_task_completion` 关闭。
 
 Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 

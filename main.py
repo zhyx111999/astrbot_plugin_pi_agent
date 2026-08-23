@@ -233,6 +233,27 @@ class PiConnectorPlugin(Star):
                 extension_paths=configured_extension_paths_for_worker(),
             )
 
+        async def notify_task_update(task, _snapshot) -> None:
+            """Send one concise actionable notification, never streaming progress."""
+
+            if not self._config_bool("notify_task_completion", True):
+                return
+            labels = {
+                "completed": "已完成",
+                "failed": "失败",
+                "cancelled": "已取消",
+                "needs_user_decision": "等待你的决定",
+            }
+            status = labels.get(task.status.value, task.status.value)
+            try:
+                await self.astrbot_adapter.send_text(
+                    task.owner_key,
+                    f"Pi 后台任务{status}。\n任务 ID：{task.task_id}\n"
+                    "请使用 pi_task_result 查看结果，或使用对应任务工具继续操作。",
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("Unable to notify task owner for %s", task.task_id, exc_info=True)
+
         try:
             scheduler = TaskScheduler(
                 registry,
@@ -257,6 +278,7 @@ class PiConnectorPlugin(Star):
                     self._config_value("session_retention_hours", 24)
                 ),
                 session_root=state_root / "sessions",
+                task_update_callback=notify_task_update,
             )
             await scheduler.start()
         except Exception:

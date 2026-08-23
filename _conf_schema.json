@@ -92,6 +92,12 @@
     "hint": "这不是任务硬超时，也不是空闲超时。它限制后台观察器的 get_state 请求，以及 steer、cancel、resume 等短控制操作的确认时间。pi_task_poll 只读取本地缓冲事件和最新持久化快照，不等待 Pi。",
     "default": 10.0
   },
+  "notify_task_completion": {
+    "type": "bool",
+    "description": "任务结束时主动通知任务所属会话",
+    "hint": "仅在任务完成、失败、取消或需要用户决定时发送一次简短通知，不会发送运行中的中间进度。",
+    "default": true
+  },
   "inherit_persona": {
     "type": "bool",
     "description": "将当前 AstrBot 人设复制到新建的 Pi 任务",

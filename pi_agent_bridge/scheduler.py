@@ -81,6 +81,8 @@ class TaskScheduler:
         agent_root: str | Path | None = None,
         worker_config_factory: WorkerConfigFactory | None = None,
         process_probe: ProcessProbe = _is_process_alive,
+        task_update_callback: Callable[[TaskRecord, Mapping[str, Any]], Awaitable[Any] | Any]
+        | None = None,
     ) -> None:
         if poll_interval_seconds < 1:
             raise ValueError("poll_interval_seconds must be at least 1")
@@ -121,6 +123,8 @@ class TaskScheduler:
         self.session_retention_hours = session_retention_hours
         self.process_probe = process_probe
         self.worker_config_factory = worker_config_factory
+        self.task_update_callback = task_update_callback
+        self._notified_task_states: set[tuple[str, str]] = set()
 
         self._adapters: dict[str, PiRpcAdapter] = {}
         self._observer_task: asyncio.Task[None] | None = None
@@ -635,7 +639,24 @@ class TaskScheduler:
             updated = self.registry.transition_status(task_id, TaskStatus.COMPLETED)
         if updated.status in _TERMINAL_STATUSES:
             await self._release_terminal_worker(task_id, adapter)
+        if updated.status in _TERMINAL_STATUSES | {TaskStatus.NEEDS_USER_DECISION}:
+            await self._notify_task_update(updated, snapshot)
         return updated
+
+    async def _notify_task_update(
+        self, task: TaskRecord, snapshot: Mapping[str, Any]
+    ) -> None:
+        """Notify once for actionable terminal states, never for running progress."""
+
+        if self.task_update_callback is None:
+            return
+        key = (task.task_id, task.status.value)
+        if key in self._notified_task_states:
+            return
+        self._notified_task_states.add(key)
+        result = self.task_update_callback(task, snapshot)
+        if inspect.isawaitable(result):
+            await result
 
     async def _poll_pi_state(
         self, adapter: PiRpcAdapter

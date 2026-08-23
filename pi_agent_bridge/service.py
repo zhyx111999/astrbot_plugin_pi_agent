@@ -325,12 +325,15 @@ class PiTaskService:
         snapshot_payload = snapshot.payload if snapshot else {}
         events = snapshot_payload.get("events", []) if isinstance(snapshot_payload, dict) else []
         has_new_meaningful_event = False
+        is_new_snapshot = False
         if report_newness and snapshot is not None:
             previous_id = self._reported_snapshot_ids.get(task_id)
-            has_new_meaningful_event = (
-                snapshot.has_meaningful_event and previous_id != snapshot.snapshot_id
-            )
+            is_new_snapshot = previous_id != snapshot.snapshot_id
+            has_new_meaningful_event = snapshot.has_meaningful_event and is_new_snapshot
             self._reported_snapshot_ids[task_id] = snapshot.snapshot_id
+        visible_snapshot = dict(snapshot_payload) if isinstance(snapshot_payload, dict) else {}
+        if not include_all_events and not is_new_snapshot:
+            visible_snapshot.pop("events", None)
         return self.ok(
             operation,
             task_id=task.task_id,
@@ -338,10 +341,14 @@ class PiTaskService:
             has_new_meaningful_event=has_new_meaningful_event,
             progress={
                 "task": self._task_dict(task),
-                "snapshot": snapshot_payload,
+                "snapshot": visible_snapshot,
                 "no_meaningful_event_count": task.no_meaningful_event_count,
             },
-            content=_content_blocks(events, include_all=include_all_events),
+            content=(
+                _content_blocks(events, include_all=include_all_events)
+                if (include_all_events or is_new_snapshot)
+                else []
+            ),
             artifacts=[
                 self._artifact_dict(item)
                 for item in self.registry.list_artifacts(task_id)

@@ -245,6 +245,85 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 
 
 @pytest.mark.asyncio
+async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Path):
+    registry = TaskRegistry(tmp_path / "tasks.db")
+    scheduler = TaskScheduler(
+        registry,
+        workspace_root=tmp_path / "workspaces",
+        adapter_factory=FakeAdapter,
+        poll_interval_seconds=3600,
+    )
+    service = PiTaskService(registry, scheduler)
+    created = await service.create_task(owner_key="qq:1", task="inspect")
+    task_id = created["task_id"]
+    await asyncio.sleep(0)
+
+    class Event:
+        meaningful = True
+        payload = {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "text_delta", "delta": "once"},
+        }
+
+        def as_dict(self):
+            return {"cursor": 1, "meaningful": True, "payload": self.payload}
+
+    adapter = FakeAdapter.instances[-1]
+    adapter.event_cursor = 1
+    adapter.drain_events = lambda **_: [Event()]
+    await scheduler.poll_task(task_id)
+
+    status = service.status(task_id)
+    repeated_status = service.status(task_id)
+    first_poll = await service.poll(task_id)
+    repeated_poll = await service.poll(task_id)
+
+    assert status["content"] == []
+    assert repeated_status["content"] == []
+    assert status["progress"]["snapshot"].get("events") is None
+    assert repeated_status["progress"]["snapshot"].get("events") is None
+    assert first_poll["content"]
+    assert repeated_poll["content"] == []
+    assert repeated_poll["progress"]["snapshot"].get("events") is None
+
+    await service.shutdown()
+    await scheduler.shutdown()
+    registry.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_notification_is_once_and_running_is_silent(tmp_path: Path):
+    FakeAdapter.instances.clear()
+    registry = TaskRegistry(tmp_path / "tasks.db")
+    notifications = []
+
+    async def notify(task, snapshot):
+        notifications.append((task.task_id, task.status.value, snapshot.get("phase")))
+
+    scheduler = TaskScheduler(
+        registry,
+        workspace_root=tmp_path / "workspaces",
+        adapter_factory=FakeAdapter,
+        poll_interval_seconds=3600,
+        no_meaningful_event_limit=1,
+        task_update_callback=notify,
+    )
+    service = PiTaskService(registry, scheduler)
+    created = await service.create_task(owner_key="qq:1", task="inspect")
+    task_id = created["task_id"]
+    await asyncio.sleep(0)
+
+    await scheduler.poll_task(task_id)
+    await scheduler.poll_task(task_id)
+
+    assert notifications == [(task_id, TaskStatus.NEEDS_USER_DECISION.value, "working")]
+
+    await service.shutdown()
+    await scheduler.shutdown()
+    registry.close()
+
+
+@pytest.mark.asyncio
 async def test_resume_steers_same_worker_and_cancel_delete_cleanup(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
