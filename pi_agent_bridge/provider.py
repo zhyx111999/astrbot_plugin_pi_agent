@@ -95,7 +95,7 @@ class PiModelSettings:
             top_p=_number_or_none(config.get("pi_top_p", 1.0)),
             top_k=_positive_int(config.get("pi_top_k")),
             min_p=_number_or_none(config.get("pi_min_p")),
-            sampling_params=config.get("pi_sampling_params") or {},
+            sampling_params=_sampling_config(config.get("pi_sampling_params")),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -110,6 +110,21 @@ class PiModelSettings:
             "min_p": self.min_p,
             "sampling_params": dict(self.sampling_params),
         }
+
+
+def _sampling_config(value: Any) -> Mapping[str, Any]:
+    if not value:
+        return {}
+    if isinstance(value, Mapping):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("pi_sampling_params must be valid JSON") from exc
+        if isinstance(parsed, Mapping):
+            return parsed
+    raise ValueError("pi_sampling_params must be a JSON object")
 
 
 # ``api_base`` field is not sufficient: Anthropic and several other adapters

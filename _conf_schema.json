@@ -45,6 +45,7 @@
     "type": "list",
     "description": "Pi 输入模态",
     "hint": "当前支持 text 和 image。Pi 是否能实际处理图片仍取决于所选模型和 Provider。",
+    "items": {"type": "string"},
     "default": ["text", "image"]
   },
   "pi_temperature": {
@@ -72,10 +73,10 @@
     "default": 0.0
   },
   "pi_sampling_params": {
-    "type": "object",
-    "description": "Pi 额外采样参数",
-    "hint": "可选的 JSON 采样参数，按 Pi models.json 的 samplingParams 原样传递；不要填 Provider 专属认证或上下文字段。",
-    "default": {}
+    "type": "string",
+    "description": "Pi 额外采样参数 JSON",
+    "hint": "可选 JSON 对象字符串，按 Pi models.json 的 samplingParams 原样传递；不要填 Provider 专属认证或上下文字段。",
+    "default": ""
   },
   "pi_session_dir": {
     "type": "string",
@@ -156,18 +157,21 @@
     "type": "list",
     "description": "追加的 Pi Skill 目录",
     "hint": "填写包含 SKILL.md 的 Skill 目录绝对路径，每个路径单独作为一项。任务启动时会通过 Pi 公共 CLI 的 --skill 参数传入；路径不存在会导致对应任务结构化启动失败。",
+    "items": {"type": "string"},
     "default": []
   },
   "pi_extension_paths": {
     "type": "list",
     "description": "追加的 Pi 用户扩展文件或目录",
     "hint": "填写 Pi 官方扩展文件或扩展目录的绝对路径，每个路径单独一项。任务启动时会通过 Pi 公共 CLI 的 --extension 参数传入；路径不存在会导致对应任务结构化启动失败。",
+    "items": {"type": "string"},
     "default": []
   },
   "pi_mcp_config_paths": {
     "type": "list",
     "description": "外部 Pi 扩展或 MCP 配置路径",
     "hint": "当前版本不支持通过桥接层加载这些路径，也不会自动导入 AstrBot MCP 服务。请保持为空；填写任意路径会让 pi_agent 返回结构化的不支持能力结果。",
+    "items": {"type": "string"},
     "default": []
   }
 }
