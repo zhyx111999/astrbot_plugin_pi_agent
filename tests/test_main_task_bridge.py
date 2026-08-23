@@ -57,7 +57,7 @@ async def test_task_status_initializes_registry_before_visibility_check(plugin, 
 
     hidden = await plugin.pi_task_status(other_event, task.task_id)
     assert '"ok":false' in hidden
-    assert "task not found" in hidden
+    assert "task not found or legacy session id supplied" in hidden
     assert plugin.pi_task_service.status.call_count == 1
     registry.close()
 

@@ -367,7 +367,11 @@ class PiConnectorPlugin(Star):
 
         service = await self._task_service_or_error()
         if self._visible_task(event, task_id) is None:
-            raise LookupError("task not found")
+            raise LookupError(
+                "task not found or legacy session id supplied; use pi_send_message "
+                "for pi_open_session sessions, or use the task_id returned by pi_agent "
+                "with pi_task_* tools"
+            )
         return service
 
     def _current_persona(self, event: AstrMessageEvent) -> str | None:
@@ -1175,7 +1179,12 @@ class PiConnectorPlugin(Star):
             return denied
         try:
             info = await self.pi_connection_manager.open_session(event, path, name=name)
-            return f"Opened new pi session.\n{format_session_info(info)}"
+            return (
+                "Opened new pi session (legacy). Use pi_send_message, "
+                "pi_get_session_info, or pi_resume_session with this session; "
+                "do not pass this session id to pi_task_* tools.\n"
+                f"{format_session_info(info)}"
+            )
         except PiError as exc:
             return f"Error: {exc}"
 
