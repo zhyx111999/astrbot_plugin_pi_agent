@@ -940,12 +940,16 @@ class PiConnectorPlugin(Star):
         prompt: str,
         workspace: str = "",
     ) -> str:
-        """Delegate a long-running, multi-step task to an isolated Pi worker.
+        """Use Pi as AstrBot's code agent executor for long-running work.
 
-        Use this for sustained research, coding, multi-agent work, or tasks
-        that should continue while the main conversation handles other turns.
-        The call returns immediately with a task id; use the task tools to
-        observe it. Simple questions and short tool calls belong to AstrBot.
+        Pi can act as a code agent for generating, modifying, refactoring,
+        testing, debugging, and running code or scripts, and can delegate
+        long-running or multi-step work to an isolated worker. Use it for
+        sustained research, coding, automation, multi-agent work, or tasks
+        that should run in the background while AstrBot continues handling the
+        main conversation. This call returns a task_id immediately; AstrBot
+        uses the task tools afterward to inspect and manage the task. Simple
+        questions and short tool calls belong to AstrBot.
 
         Args:
             prompt(string): Complete task instruction for the delegated worker
@@ -1014,6 +1018,9 @@ class PiConnectorPlugin(Star):
     async def pi_task_status(self, event: AstrMessageEvent, task_id: str) -> str:
         """Read AstrBot task control metadata without Pi event content.
 
+        This is read-only and does not inject the current caller's context
+        into the task or change its Pi session.
+
         Args:
             task_id(string): Task id returned by pi_agent
         """
@@ -1028,7 +1035,11 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_list")
     async def pi_task_list(self, event: AstrMessageEvent) -> str:
-        """List every registered Pi task; owner_key identifies write authority."""
+        """List every registered Pi task for AstrBot to select and manage.
+
+        The list includes tasks owned by other users. Listing is read-only;
+        owner or administrator permission is checked separately for writes.
+        """
         operation = "task_list"
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied)
@@ -1042,7 +1053,10 @@ class PiConnectorPlugin(Star):
     async def pi_task_read(
         self, event: AstrMessageEvent, task_id: str, cursor: int = 0, limit: int = 100
     ) -> str:
-        """Read raw Pi events for a task page; this operation is read-only.
+        """Read raw Pi events for AstrBot to inspect, without semantic rewriting.
+
+        This is read-only. It does not inject the current caller's persona,
+        conversation, event, or model into the existing task.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1062,7 +1076,10 @@ class PiConnectorPlugin(Star):
     async def pi_task_result(
         self, event: AstrMessageEvent, task_id: str, offset: int = 0, limit: int = 100
     ) -> str:
-        """Compatibility alias that reads raw Pi events by event cursor.
+        """Compatibility alias for pi_task_read; return raw Pi events by cursor.
+
+        This is not a summarized final-answer endpoint. AstrBot decides how
+        to interpret the returned Pi session content.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1082,6 +1099,9 @@ class PiConnectorPlugin(Star):
     async def pi_task_poll(self, event: AstrMessageEvent, task_id: str) -> str:
         """Ask Pi for one short state observation without returning Pi content.
 
+        AstrBot explicitly triggers this read-only check. It does not inject
+        the current caller's context into the existing Pi session.
+
         Args:
             task_id(string): Task id returned by pi_agent
         """
@@ -1098,7 +1118,11 @@ class PiConnectorPlugin(Star):
     async def pi_task_follow_up(
         self, event: AstrMessageEvent, task_id: str, message: str
     ) -> str:
-        """Inject an additional requirement into the active Pi task.
+        """Send an explicit follow-up requirement to the existing Pi session.
+
+        This is a write operation for the task owner or an AstrBot
+        administrator. It changes the selected task only; it does not create
+        a new session or inject the caller's full AstrBot context.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1115,7 +1139,11 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_resume")
     async def pi_task_resume(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Resume a task paused after repeated empty observations.
+        """Resume an existing Pi task/session without rebuilding its context.
+
+        The original task keeps its provider, model, persona, conversation
+        snapshot, and event history. Only the owner or an administrator may
+        perform this write operation.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1131,7 +1159,10 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_cancel")
     async def pi_task_cancel(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Cancel a Pi task without deleting its durable history.
+        """Cancel an existing Pi task without deleting its durable history.
+
+        This is a write operation for the task owner or an AstrBot
+        administrator.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1147,7 +1178,10 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_delete")
     async def pi_task_delete(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Cancel and delete a Pi task, metadata, and managed workspace.
+        """Delete an existing Pi task and its managed resources.
+
+        This is a write operation for the task owner or an AstrBot
+        administrator. Read-only inspection does not permit deletion.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1163,7 +1197,11 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_session_list")
     async def pi_session_list(self, event: AstrMessageEvent) -> str:
-        """List Pi sessions represented by visible background tasks."""
+        """List every registered async Pi session for AstrBot to inspect.
+
+        This is a read-only directory operation. It does not create or
+        reconfigure any Pi session.
+        """
         operation = "session_list"
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied)
@@ -1184,7 +1222,10 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_session_inspect")
     async def pi_session_inspect(self, event: AstrMessageEvent, session_id: str) -> str:
-        """Inspect either a task-owned session or an administrator legacy Pi session.
+        """Inspect an async task session, or an administrator-only legacy session.
+
+        Inspection is read-only and never injects the current caller's
+        context into the inspected session.
 
         Args:
             session_id(string): Task ID from pi_agent or session ID from pi_open_session
@@ -1220,7 +1261,10 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_session_resume")
     async def pi_session_resume(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Resume the Pi session for a paused or orphaned task.
+        """Resume an existing async Pi session without rebuilding its context.
+
+        This is a write operation for the task owner or an AstrBot
+        administrator.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1236,7 +1280,10 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_session_delete")
     async def pi_session_delete(self, event: AstrMessageEvent, session_id: str) -> str:
-        """Delete either a task-owned session or an administrator legacy Pi session.
+        """Delete an async Pi session or an administrator-only legacy session.
+
+        Async task deletion requires task-owner or administrator permission.
+        Inspection and reading never grant deletion permission.
 
         Args:
             session_id(string): Task ID from pi_agent or session ID from pi_open_session
@@ -1272,7 +1319,9 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_artifact_inspect")
     async def pi_artifact_inspect(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Inspect text, structured, and media artifacts produced by a task.
+        """Inspect artifacts produced by an async Pi task.
+
+        This is read-only and does not modify or reconfigure the Pi session.
 
         Args:
             task_id(string): Task id returned by pi_agent
