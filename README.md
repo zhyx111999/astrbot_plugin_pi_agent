@@ -70,21 +70,24 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
 | `task_require_admin` | `false` | 为 `true` 时，AstrBot 管理员可以查看和管理所有用户的 Pi 任务；普通用户始终只能管理自己的任务。关闭时所有用户都按任务 owner 隔离。 |
 | `pi_model` | `""` | 直接选择 AstrBot 中已经配置好的具体 Provider/模型。所有后台 Pi 任务固定使用这个模型，不继承当前聊天模型。仅支持 OpenAI-compatible Provider。 |
-| `state_directory` | `""` | 状态根目录；为空使用插件 `.pi`。 |
-| `task_database` | `""` | SQLite 路径；为空使用 `state_directory/tasks.db`。 |
-| `workspace_root` | `""` | 任务工作区根目录；为空使用 `state_directory/workspaces`。 |
+| `pi_session_dir` | `~/.pi/agent/sessions` | 旧版 `/pi`、`/pic` 线路使用的 Pi 原生会话目录。后台任务使用独立会话。 |
+| `state_directory` | `~/.pi/astrbot_plugin_pi_agent` | 桥接状态目录，存放任务数据库、会话、Agent 配置、工作区和 artifact 元数据。 |
+| `task_database` | `~/.pi/astrbot_plugin_pi_agent/tasks.db` | SQLite WAL 任务注册表路径。 |
+| `workspace_root` | `~/.pi/astrbot_plugin_pi_agent/workspaces` | 任务工作区根目录，每个任务使用独立子目录。 |
 | `poll_interval_seconds` | `60` | 后台观察周期，不是任务超时。 |
 | `no_meaningful_event_limit` | `3` | 连续无意义观察次数，达到后进入 `needs_user_decision`。 |
 | `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和 artifact。活动/暂停/orphaned 任务不被误删。 |
 | `max_concurrent_tasks` | `4` | 同时运行的独立 Pi worker 数量。 |
 | `command_timeout_seconds` | `10` | 仅限制后台 observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；`pi_task_poll` 只读本地快照，不等待 Pi。不是硬超时或空闲超时。 |
 | `inherit_persona` | `true` | 创建时复制主 Agent 人设；任务 prompt 同时保存当前事件的公开字段和原始消息快照。之后不会自动同步新消息。 |
-| `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个任务启动时通过 Pi 公共 CLI 的重复 `--skill <path>` 参数传递。 |
-| `pi_mcp_config_paths` | `[]` | MCP/extension 配置目前不由桥接层承载；只要非空，`pi_agent` 就返回结构化 unsupported envelope，路径不会被假装传给 Pi。 |
+| `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个路径单独一项，填写包含 `SKILL.md` 的目录绝对路径。 |
+| `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |
 
 ### Skill 与 MCP 边界
 
-Pi 官方运行时保持不变。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递；插件不修改 Pi 内部代码，也不把“传入路径”误报成“Skill 已成功加载”，实际加载结果以任务快照或结果为准。MCP 同样不是 Pi `0.84.2` RPC 的内置能力，AstrBot 的 MCP server 列表不会自动继承。当前只要 `pi_mcp_config_paths` 非空，任务创建就返回结构化 unsupported-capability envelope，配置路径不会传给 Pi；主模型应据此二次加工，而不是向用户透出原始异常。
+Pi 官方运行时保持不变。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径，例如 `C:/Users/nsus/.pi/agent/skills/my-skill` 或 `/home/user/.pi/agent/skills/my-skill`。插件会在任务启动时校验路径；路径不存在只会让对应任务结构化启动失败，不会阻止插件加载。传入路径不代表 Pi 一定成功加载 Skill，实际结果以任务快照或结果为准。
+
+MCP 和外部 Pi 扩展路径当前不能通过此桥接层配置。`pi_mcp_config_paths` 必须保持空列表 `[]`；填写任意路径会返回结构化 unsupported-capability envelope，路径不会传给 Pi，也不会自动导入 AstrBot MCP 服务。若要使用外部 Pi 扩展，应将其安装到 Pi 官方支持的用户级扩展目录，由 Pi 自己加载，而不是填写此项。
 
 ## AstrBot LLM 工具
 
