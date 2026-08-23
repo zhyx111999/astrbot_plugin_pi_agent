@@ -117,6 +117,7 @@ class PiConnectorPlugin(Star):
         self.pi_task_scheduler: TaskScheduler | None = None
         self._task_registry: TaskRegistry | None = None
         self._task_service_lock = None
+        self._legacy_output_pages: dict[str, tuple[str, int]] = {}
         logger.info("PiConnector initialized")
 
     async def initialize(self):
@@ -343,6 +344,39 @@ class PiConnectorPlugin(Star):
 
     def _task_is_visible(self, event: AstrMessageEvent, task) -> bool:
         return task.owner_key == self._task_owner_key(event) or self._can_manage_all_tasks(event)
+
+    def _legacy_output_key(self, event: AstrMessageEvent) -> str:
+        try:
+            return self.astrbot_adapter.session_origin(event)
+        except Exception:  # noqa: BLE001
+            return str(id(event))
+
+    def _paginate_legacy_output(self, event: AstrMessageEvent, output: str) -> str:
+        page_size = 4000
+        key = self._legacy_output_key(event)
+        if len(output) <= page_size:
+            self._legacy_output_pages.pop(key, None)
+            return output
+        self._legacy_output_pages[key] = (output, page_size)
+        return (
+            output[:page_size]
+            + "\n\n[输出已截断，调用 pi_legacy_output_next 获取下一页]"
+        )
+
+    def _next_legacy_output_page(self, event: AstrMessageEvent) -> str:
+        key = self._legacy_output_key(event)
+        state = self._legacy_output_pages.get(key)
+        if state is None:
+            return "No paged legacy Pi output is available."
+        output, offset = state
+        page_size = 4000
+        page = output[offset : offset + page_size]
+        next_offset = offset + len(page)
+        if next_offset >= len(output):
+            self._legacy_output_pages.pop(key, None)
+            return page
+        self._legacy_output_pages[key] = (output, next_offset)
+        return page + "\n\n[输出未结束，继续调用 pi_legacy_output_next]"
 
     @staticmethod
     def _bridge_error(
@@ -1137,20 +1171,40 @@ class PiConnectorPlugin(Star):
             return self._bridge_error(operation, safe_error_summary(exc))
 
     @filter.llm_tool(name="pi_session_inspect")
-    async def pi_session_inspect(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Inspect the Pi session associated with a task.
+    async def pi_session_inspect(self, event: AstrMessageEvent, session_id: str) -> str:
+        """Inspect either a task-owned session or an administrator legacy Pi session.
 
         Args:
-            task_id(string): Task id returned by pi_agent
+            session_id(string): Task ID from pi_agent or session ID from pi_open_session
         """
         operation = "session_inspect"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied, task_id=task_id)
+        task = self._visible_task(event, session_id)
+        if task is not None:
+            try:
+                service = await self._task_service_or_error()
+                return self._bridge_dump(service.session_inspect(session_id))
+            except Exception as exc:  # noqa: BLE001
+                return self._bridge_error(operation, safe_error_summary(exc), task_id=session_id)
+        if denied := self._require_admin(event):
+            return self._bridge_error(operation, denied, task_id=session_id)
         try:
-            service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(service.session_inspect(task_id))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+            info = self.pi_connection_manager.inspect_session(session_id)
+            return self._bridge_dump(
+                {
+                    "schema_version": "1",
+                    "ok": True,
+                    "operation": operation,
+                    "task_id": None,
+                    "status": "legacy_session",
+                    "has_new_meaningful_event": False,
+                    "progress": {"session": info.__dict__},
+                    "content": [],
+                    "artifacts": [],
+                    "error": None,
+                }
+            )
+        except PiError as exc:
+            return self._bridge_error(operation, str(exc), task_id=session_id)
 
     @filter.llm_tool(name="pi_session_resume")
     async def pi_session_resume(self, event: AstrMessageEvent, task_id: str) -> str:
@@ -1169,20 +1223,40 @@ class PiConnectorPlugin(Star):
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
 
     @filter.llm_tool(name="pi_session_delete")
-    async def pi_session_delete(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Delete the Pi session and its task-owned resources.
+    async def pi_session_delete(self, event: AstrMessageEvent, session_id: str) -> str:
+        """Delete either a task-owned session or an administrator legacy Pi session.
 
         Args:
-            task_id(string): Task id returned by pi_agent
+            session_id(string): Task ID from pi_agent or session ID from pi_open_session
         """
         operation = "session_delete"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied, task_id=task_id)
+        task = self._visible_task(event, session_id)
+        if task is not None:
+            try:
+                service = await self._task_service_or_error()
+                return self._bridge_dump(await service.session_delete(session_id))
+            except Exception as exc:  # noqa: BLE001
+                return self._bridge_error(operation, safe_error_summary(exc), task_id=session_id)
+        if denied := self._require_admin(event):
+            return self._bridge_error(operation, denied, task_id=session_id)
         try:
-            service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(await service.session_delete(task_id))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+            await self.pi_connection_manager.delete_session(event, session_id)
+            return self._bridge_dump(
+                {
+                    "schema_version": "1",
+                    "ok": True,
+                    "operation": operation,
+                    "task_id": None,
+                    "status": "legacy_session_deleted",
+                    "has_new_meaningful_event": False,
+                    "progress": {},
+                    "content": [],
+                    "artifacts": [],
+                    "error": None,
+                }
+            )
+        except PiError as exc:
+            return self._bridge_error(operation, str(exc), task_id=session_id)
 
     @filter.llm_tool(name="pi_artifact_inspect")
     async def pi_artifact_inspect(self, event: AstrMessageEvent, task_id: str) -> str:
@@ -1325,11 +1399,17 @@ class PiConnectorPlugin(Star):
             conn = await self._get_connection(event)
             slash = command if command.startswith("/") else f"/{command}"
             response = await self._collect_prompt_response(conn, slash)
-            return response or "No response from pi."
+            return self._paginate_legacy_output(event, response)
         except PiError as exc:
             return f"Error: {exc}"
 
-    @filter.llm_tool(name="pi_get_available_commands")
+    @filter.llm_tool(name="pi_legacy_output_next")
+    async def pi_legacy_output_next(self, event: AstrMessageEvent) -> str:
+        """Read the next page of truncated legacy Pi command output."""
+        if denied := self._require_admin(event):
+            return denied
+        return self._next_legacy_output_page(event)
+
     async def pi_get_available_commands(self, event: AstrMessageEvent) -> str:
         """List the slash commands available in the current pi session."""
         if denied := self._require_admin(event):

@@ -20,6 +20,7 @@ class PiConnectionManager:
         self.session_dir = session_dir
         self.executable = executable
         self._connections: dict[str, PiConnection] = {}
+        self._known_sessions: dict[str, SessionInfo] = {}
         self._default_cwd: dict[str, str] = {}
         self._last_sessions_query: dict[str, dict] = {}
 
@@ -27,6 +28,9 @@ class PiConnectionManager:
         """Return the absolute path to the pi session storage directory."""
         configured = self.session_dir or "~/.pi/agent/sessions"
         return self._normalize_path(configured)
+
+    def _session_roots(self) -> tuple[str, ...]:
+        return (self._resolve_session_dir(),)
 
     @staticmethod
     def _home_directory() -> str:
@@ -172,25 +176,23 @@ class PiConnectionManager:
         if os.path.isabs(expanded) and os.path.isfile(expanded):
             return expanded
 
-        session_root = self._resolve_session_dir()
-        if not os.path.isdir(session_root):
-            return None
-
         all_files: list[str] = []
         exact_match: str | None = None
         prefix_matches: list[str] = []
-
-        for root, _dirs, files in os.walk(session_root):
-            for f in files:
-                if not f.endswith(".jsonl"):
-                    continue
-                full = os.path.join(root, f)
-                all_files.append(full)
-                sid = self._extract_session_id(f)
-                if sid == session_id_or_path:
-                    exact_match = full
-                elif sid.startswith(session_id_or_path):
-                    prefix_matches.append(full)
+        for session_root in self._session_roots():
+            if not os.path.isdir(session_root):
+                continue
+            for root, _dirs, files in os.walk(session_root):
+                for filename in files:
+                    if not filename.endswith(".jsonl"):
+                        continue
+                    full = os.path.join(root, filename)
+                    all_files.append(full)
+                    sid = self._extract_session_id(filename)
+                    if sid == session_id_or_path:
+                        exact_match = full
+                    elif sid.startswith(session_id_or_path):
+                        prefix_matches.append(full)
 
         if exact_match:
             return exact_match
@@ -274,7 +276,9 @@ class PiConnectionManager:
             raise PiError("Session creation was cancelled by an extension")
 
         state = await conn.get_state()
-        return self._format_session_info(state, conn)
+        info = self._format_session_info(state, conn)
+        self._known_sessions[info.session_id] = info
+        return info
 
     async def resume_session(
         self,
@@ -335,36 +339,84 @@ class PiConnectionManager:
     def list_sessions(
         self, directory: str | None = None, offset: int = 0, limit: int = 10
     ) -> tuple[list[SessionInfo], int]:
-        """List pi sessions in a directory or across all stored sessions.
+        """List sessions, optionally filtering by the recorded working directory."""
 
-        Returns a tuple of (sessions_on_page, total_count). Results are sorted
-        by timestamp descending (most recent first).
-        """
         session_root = self._resolve_session_dir()
         if not os.path.isdir(session_root):
             return [], 0
-
+        target_cwd = self._normalize_path(directory) if directory else None
         sessions: list[SessionInfo] = []
-        if directory:
-            directory = self._normalize_path(directory)
-            target_dir = self._session_dir_for_cwd(directory)
-            target_path = os.path.join(session_root, target_dir)
-            if os.path.isdir(target_path):
-                sessions.extend(
-                    self._read_session_dir(target_path, include_snippet=True)
-                )
-        else:
+        seen_session_ids: set[str] = set()
+        for info in self._known_sessions.values():
+            if target_cwd is not None and self._normalize_path(info.cwd) != target_cwd:
+                continue
+            sessions.append(info)
+            seen_session_ids.add(info.session_id)
+        for session_root in self._session_roots():
+            if not os.path.isdir(session_root):
+                continue
             for root, _dirs, files in os.walk(session_root):
-                for f in files:
-                    if f.endswith(".jsonl"):
-                        full = os.path.join(root, f)
-                        info = self._read_session_header(full, include_snippet=True)
-                        if info:
-                            sessions.append(info)
+                for filename in files:
+                    if not filename.endswith(".jsonl"):
+                        continue
+                    info = self._read_session_header(
+                        os.path.join(root, filename), include_snippet=True
+                    )
+                    if info is None:
+                        continue
+                    if info.session_id in seen_session_ids:
+                        continue
+                    if target_cwd is not None and self._normalize_path(info.cwd) != target_cwd:
+                        continue
+                    sessions.append(info)
 
         sessions.sort(key=lambda info: info.timestamp or "", reverse=True)
         total = len(sessions)
         return sessions[offset : offset + limit], total
+
+    def inspect_session(self, session_id_or_path: str) -> SessionInfo:
+        """Inspect one legacy Pi session by its ID or JSONL path."""
+
+        known = self._known_sessions.get(session_id_or_path)
+        if known is not None:
+            return known
+        session_file = self._find_session_file(session_id_or_path)
+        if session_file is None:
+            raise PiError(f"Session not found: {session_id_or_path}")
+        info = self._read_session_header(session_file, include_snippet=True)
+        if info is None:
+            raise PiError(f"Session file is corrupted or empty: {session_file}")
+        return info
+
+    async def delete_session(self, event, session_id_or_path: str) -> None:
+        """Delete one legacy session file and close its active connection if needed."""
+
+        known = self._known_sessions.get(session_id_or_path)
+        session_file = self._find_session_file(session_id_or_path)
+        if session_file is None:
+            if known is None:
+                raise PiError(f"Session not found: {session_id_or_path}")
+            await self.close_connection(event)
+            self._known_sessions.pop(session_id_or_path, None)
+            return
+        allowed_roots = [Path(root).resolve(strict=False) for root in self._session_roots()]
+        path = Path(session_file).resolve(strict=False)
+        try:
+            owned = any(path.is_relative_to(root) for root in allowed_roots)
+        except AttributeError:  # pragma: no cover - Python < 3.9 compatibility
+            owned = any(str(path).startswith(str(root)) for root in allowed_roots)
+        if not owned:
+            raise PiError("Refusing to delete a session outside the configured Pi session directory")
+        conn = await self.get_connection(event, create=False)
+        if conn is not None and conn.session_path:
+            active_path = Path(conn.session_path).resolve(strict=False)
+            if active_path == path:
+                await self.close_connection(event)
+        try:
+            path.unlink()
+            self._known_sessions.pop(session_id_or_path, None)
+        except OSError as exc:
+            raise PiError(f"Failed to delete session: {exc}") from exc
 
     def _read_session_dir(
         self, path: str, include_snippet: bool = False

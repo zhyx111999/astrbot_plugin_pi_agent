@@ -85,7 +85,7 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
 | `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |
 
-`pi_task_status` 只返回状态和快照元数据，不重复输出 Pi 的中间文本；`pi_task_poll` 只在发现新的持久化快照时返回新增内容，重复调用不会重复汇报同一段进度。完整结果和内容使用 `pi_task_result` 查看。后台观察器仍按 `poll_interval_seconds` 执行远端状态检查，运行中的观察不会主动向聊天发送消息；只有完成、失败、取消或进入 `needs_user_decision` 时才发送一次简短通知，可通过 `notify_task_completion` 关闭。
+异步任务的 Pi Provider/RPC 错误会使任务转为 `failed`，并可通过 `pi_task_result` 查看错误内容；不会继续显示为 `running`。legacy `pi_open_session` 与 `pi_agent` 使用不同 ID，但 `pi_session_inspect` 和 `pi_session_delete` 现在都可按对应类型处理。legacy 会话创建后即使 Pi 尚未落盘 JSONL，也能在当前插件进程中被列出、检查和删除。
 
 Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 
@@ -109,9 +109,10 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 | `pi_task_cancel(task_id)` | 取消 worker，但保留任务历史。 |
 | `pi_task_delete(task_id)` | 取消并删除任务元数据及任务拥有的资源。 |
 | `pi_session_list()` | 列出当前用户可见的异步任务对应的 Pi session；只有开启管理员全局管理后，管理员才可见全部 session。 |
-| `pi_session_inspect(task_id)` | 查看任务关联的 session、路径和状态。 |
-| `pi_session_resume(task_id)` | 恢复任务关联的 Pi session。 |
-| `pi_session_delete(task_id)` | 删除任务关联的 session 与资源。 |
+| `pi_session_inspect(session_id)` | 检查 `pi_agent` 的 task ID 或 legacy `pi_open_session` session ID。 |
+| `pi_session_resume(task_id)` | 恢复任务关联的 session。仅接受 `pi_agent` task ID。 |
+| `pi_session_delete(session_id)` | 删除 task-owned session 或 legacy session。 |
+| `pi_legacy_output_next()` | 获取被截断的旧版 Pi 命令输出下一页。 |
 | `pi_artifact_inspect(task_id)` | 查看任务生成的文本、JSON、文件和媒体 artifact。 |
 
 所有异步工具都返回相同的 JSON envelope。成功和失败都交给主模型二次加工：

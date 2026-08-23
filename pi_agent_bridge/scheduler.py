@@ -997,7 +997,15 @@ def _agent_finished(events: list[Any]) -> bool:
 def _worker_failed(events: list[Any], snapshot: dict[str, Any]) -> bool:
     if snapshot.get("state") == "exited" and snapshot.get("returncode") not in {None, 0}:
         return True
-    return any(event.payload.get("type") in {"rpc_error", "error"} for event in events)
+    for event in events:
+        payload = event.payload
+        if payload.get("type") in {"rpc_error", "error"}:
+            return True
+        if payload.get("type") == "message_end":
+            message = payload.get("message")
+            if isinstance(message, Mapping) and message.get("stopReason") == "error":
+                return True
+    return False
 
 
 def _phase(events: list[Any], snapshot: dict[str, Any]) -> str:

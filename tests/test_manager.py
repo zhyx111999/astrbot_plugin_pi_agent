@@ -107,7 +107,38 @@ class TestFindSessionFile:
             os.utime(full_path, (mtime, mtime))
         return full_path
 
-    def test_absolute_path(self, tmp_path, mgr):
+    def test_list_sessions_filters_by_recorded_cwd(self, tmp_path, mgr):
+        first = self._write_session(
+            str(tmp_path), "flat-one.jsonl", "one", mtime=time.time()
+        )
+        second = self._write_session(
+            str(tmp_path), "nested/flat-two.jsonl", "two", mtime=time.time()
+        )
+        for path, cwd in ((first, "/tmp/work-a"), (second, "/tmp/work-b")):
+            lines = open(path, encoding="utf-8").readlines()
+            header = json.loads(lines[0])
+            header["cwd"] = cwd
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(header) + "\n")
+
+        sessions, total = mgr.list_sessions("/tmp/work-b")
+
+        assert total == 1
+        assert sessions[0].session_id == "two"
+        assert sessions[0].cwd == "/tmp/work-b"
+
+    def test_inspect_and_delete_legacy_session(self, tmp_path, mgr):
+        path = self._write_session(
+            str(tmp_path), "session_legacy-session.jsonl", "legacy-session"
+        )
+        info = mgr.inspect_session("legacy-session")
+        assert info.session_file == path
+
+        import asyncio
+        event = types.SimpleNamespace()
+        asyncio.run(mgr.delete_session(event, "legacy-session"))
+        assert not os.path.exists(path)
+
         path = self._write_session(str(tmp_path), "abc.jsonl", "abc-123")
         result = mgr._find_session_file(path)
         assert result == path

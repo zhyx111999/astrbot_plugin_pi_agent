@@ -245,8 +245,52 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 
 
 @pytest.mark.asyncio
-async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Path):
+async def test_message_end_provider_error_transitions_task_to_failed(tmp_path: Path):
+    FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
+    scheduler = TaskScheduler(
+        registry,
+        workspace_root=tmp_path / "workspaces",
+        adapter_factory=FakeAdapter,
+        poll_interval_seconds=3600,
+    )
+    service = PiTaskService(registry, scheduler)
+    created = await service.create_task(owner_key="qq:1", task="inspect")
+    task_id = created["task_id"]
+    await asyncio.sleep(0)
+
+    class Event:
+        meaningful = True
+        payload = {
+            "type": "message_end",
+            "message": {
+                "stopReason": "error",
+                "errorMessage": "OpenAI API error (502): upstream unavailable",
+            },
+        }
+
+        def as_dict(self):
+            return {"cursor": 1, "meaningful": True, "payload": self.payload}
+
+    adapter = FakeAdapter.instances[-1]
+    adapter.event_cursor = 1
+    adapter.drain_events = lambda **_: [Event()]
+    await scheduler.poll_task(task_id)
+
+    result = service.result(task_id)
+    assert registry.get_task(task_id).status is TaskStatus.FAILED
+    assert result["content"] == [
+        {"type": "error", "text": "OpenAI API error (502): upstream unavailable"}
+    ]
+
+    await service.shutdown()
+    await scheduler.shutdown()
+    registry.close()
+
+
+@pytest.mark.asyncio
+async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Path):
+    registry = TaskRegistry(tmp_path / "status-tasks.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",

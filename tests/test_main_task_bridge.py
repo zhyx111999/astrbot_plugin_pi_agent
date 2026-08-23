@@ -119,6 +119,19 @@ async def test_legacy_pi_error_event_is_returned_to_astrbot(plugin):
     assert "No response from pi" not in result
 
 
+def test_paginate_legacy_output(plugin, admin_event):
+    output = "x" * 8001
+    first = plugin._paginate_legacy_output(admin_event, output)
+    second = plugin._next_legacy_output_page(admin_event)
+    third = plugin._next_legacy_output_page(admin_event)
+
+    assert len(first) > 4000
+    assert "pi_legacy_output_next" in first
+    assert len(second) > 4000
+    assert "pi_legacy_output_next" in second
+    assert third == "x"
+
+
 @pytest.mark.asyncio
 async def test_task_access_is_owner_scoped_by_default(plugin, tmp_path):
     registry = TaskRegistry(tmp_path / "tasks.db")

@@ -445,6 +445,12 @@ def _content_blocks(events: Any, *, include_all: bool) -> list[dict[str, Any]]:
         text = update.get("delta") if isinstance(update, dict) else payload.get("text")
         if isinstance(text, str) and text:
             blocks.append({"type": "text", "text": text})
+        if payload.get("type") == "message_end":
+            message = payload.get("message")
+            if isinstance(message, dict) and message.get("stopReason") == "error":
+                error = message.get("errorMessage") or "Pi agent turn failed"
+                blocks.append({"type": "error", "text": str(error)})
+                continue
         elif include_all and payload.get("type") in {"agent_end", "tool_end", "artifact"}:
             blocks.append({"type": "event", "event": payload})
     return blocks
