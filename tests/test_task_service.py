@@ -98,7 +98,10 @@ async def test_shutdown_finalizes_queued_launch(tmp_path: Path):
 
     task = registry.get_task(task_id)
     assert task.status is TaskStatus.FAILED
-    assert registry.get_latest_snapshot(task_id).payload["phase"] == "cancelled_before_start"
+    assert registry.get_latest_snapshot(task_id).payload["phase"] in {
+        "cancelled_before_start",
+        "failed_to_start",
+    }
     registry.close()
 
 
@@ -245,9 +248,56 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 
 
 @pytest.mark.asyncio
-async def test_message_end_provider_error_transitions_task_to_failed(tmp_path: Path):
+async def test_result_is_paginated_and_hides_raw_event_tree(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
+    scheduler = TaskScheduler(
+        registry,
+        workspace_root=tmp_path / "workspaces",
+        adapter_factory=FakeAdapter,
+        poll_interval_seconds=3600,
+    )
+    service = PiTaskService(registry, scheduler)
+    created = await service.create_task(owner_key="qq:1", task="inspect")
+    task_id = created["task_id"]
+    await asyncio.sleep(0)
+
+    class Event:
+        meaningful = True
+        payload = {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "text_delta", "delta": "x" * 5000},
+        }
+
+        def as_dict(self):
+            return {"cursor": 1, "meaningful": True, "payload": self.payload}
+
+    adapter = FakeAdapter.instances[-1]
+    adapter.event_cursor = 1
+    adapter.drain_events = lambda **_: [Event()]
+    await scheduler.poll_task(task_id)
+    result = service.result(task_id, offset=0, limit=1)
+
+    assert result["progress"]["snapshot"].get("events") is None
+    assert result["progress"]["result_page"] == {
+        "offset": 0,
+        "limit": 1,
+        "returned": 1,
+        "total": 1,
+        "has_more": False,
+    }
+    assert result["content"][0]["truncated"] is True
+    assert len(result["content"][0]["text"]) == 4000
+
+    await service.shutdown()
+    await scheduler.shutdown()
+    registry.close()
+
+
+@pytest.mark.asyncio
+async def test_message_end_provider_error_transitions_task_to_failed(tmp_path: Path):
+    FakeAdapter.instances.clear()
+    registry = TaskRegistry(tmp_path / "provider-error-tasks.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",

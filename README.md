@@ -87,6 +87,8 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 
 异步任务的 Pi Provider/RPC 错误会使任务转为 `failed`，并可通过 `pi_task_result` 查看错误内容；不会继续显示为 `running`。legacy `pi_open_session` 与 `pi_agent` 使用不同 ID，但 `pi_session_inspect` 和 `pi_session_delete` 现在都可按对应类型处理。legacy 会话创建后即使 Pi 尚未落盘 JSONL，也能在当前插件进程中被列出、检查和删除。
 
+`pi_task_status` 只返回状态和快照元数据，不重复输出 Pi 的中间文本；`pi_task_poll` 只在发现新的持久化快照时返回新增内容，重复调用不会重复汇报同一段进度。返回的 `progress.observer` 给出最近观察时间、观察周期和预计下次观察倒计时；在倒计时结束前重复 poll 不会推动 worker。`pi_task_result` 默认返回有限长度的结果分页，使用 offset/limit 获取后续块，不再向主模型暴露完整事件树、reasoning 或工具参数。
+
 Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 
 Pi 用户扩展通过 `pi_extension_paths` 配置，填写扩展文件或扩展目录的绝对路径。任务启动时会作为独立的 `--extension <path>` 参数传给 Pi。Pi 官方内置工具仍然正常可用，用户扩展工具会在 Pi worker 内按 Pi 官方规则注册。
@@ -102,7 +104,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 | `pi_agent(prompt, workspace?)` | 创建独立长任务，立即返回 `task_id`。 |
 | `pi_task_status(task_id)` | 读取持久化任务状态和最新快照。 |
 | `pi_task_list()` | 列出当前用户可见的任务；只有开启管理员全局管理后，管理员才可见全部任务。 |
-| `pi_task_result(task_id)` | 读取最新快照中的文本/结构化内容，以及已持久化的 artifact。 |
+| `pi_task_result(task_id, offset?, limit?)` | 返回任务结果的有限分页摘要和 artifact；使用 offset/limit 查看后续块。 |
 | `pi_task_poll(task_id)` | 刷新本地事件缓冲并返回最新 envelope；不请求远端 Pi 状态。 |
 | `pi_task_follow_up(task_id, message)` | 使用 Pi steer 向活动任务追加要求。 |
 | `pi_task_resume(task_id)` | 继续 `needs_user_decision` 或可恢复任务。 |

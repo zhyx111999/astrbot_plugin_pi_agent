@@ -234,9 +234,27 @@ class PiTaskService:
         except Exception as exc:  # noqa: BLE001
             return self.error("task_status", safe_error_summary(exc), task_id=task_id)
 
-    def result(self, task_id: str) -> dict[str, Any]:
+    def result(
+        self, task_id: str, *, offset: int = 0, limit: int = 4
+    ) -> dict[str, Any]:
         try:
-            return self.envelope("task_result", task_id, include_all_events=True)
+            if offset < 0 or limit < 1:
+                raise ValueError("offset must be non-negative and limit must be positive")
+            result = self.envelope("task_result", task_id)
+            snapshot = self.registry.get_latest_snapshot(task_id)
+            payload = snapshot.payload if snapshot else {}
+            events = payload.get("events", []) if isinstance(payload, dict) else []
+            blocks = _content_blocks(events, include_all=False)
+            page = [_truncate_block(block) for block in blocks[offset : offset + limit]]
+            result["content"] = page
+            result["progress"]["result_page"] = {
+                "offset": offset,
+                "limit": limit,
+                "returned": len(page),
+                "total": len(blocks),
+                "has_more": offset + len(page) < len(blocks),
+            }
+            return result
         except Exception as exc:  # noqa: BLE001
             return self.error("task_result", safe_error_summary(exc), task_id=task_id)
 
@@ -246,7 +264,7 @@ class PiTaskService:
                 self._task_dict(task)
                 for task in self.registry.list_tasks(owner_key=owner_key)
             ]
-            return self.ok("task_list", status="ok", progress={"tasks": tasks})
+            return self.ok("task_list", status="ok", progress={"resource_type": "async_task", "count": len(tasks), "tasks": tasks})
         except Exception as exc:  # noqa: BLE001
             return self.error("task_list", safe_error_summary(exc))
 
@@ -264,7 +282,7 @@ class PiTaskService:
                             "workspace": task.workspace,
                         }
                     )
-            return self.ok("session_list", status="ok", progress={"sessions": sessions})
+            return self.ok("session_list", status="ok", progress={"resource_type": "async_task_session", "count": len(sessions), "sessions": sessions})
         except Exception as exc:  # noqa: BLE001
             return self.error("session_list", safe_error_summary(exc))
 
@@ -342,6 +360,7 @@ class PiTaskService:
             progress={
                 "task": self._task_dict(task),
                 "snapshot": visible_snapshot,
+                "observer": self.scheduler.observation_info(task_id),
                 "no_meaningful_event_count": task.no_meaningful_event_count,
             },
             content=(
@@ -406,6 +425,7 @@ class PiTaskService:
     @staticmethod
     def _task_dict(task: TaskRecord) -> dict[str, Any]:
         return {
+            "resource_type": "async_task",
             "task_id": task.task_id,
             "owner_key": task.owner_key,
             "status": task.status.value,
@@ -429,6 +449,16 @@ class PiTaskService:
             "sha256": item.sha256,
             "metadata": item.metadata,
         }
+
+
+
+def _truncate_block(block: dict[str, Any], max_length: int = 4000) -> dict[str, Any]:
+    result = dict(block)
+    text = result.get("text")
+    if isinstance(text, str) and len(text) > max_length:
+        result["text"] = text[: max_length - 3] + "..."
+        result["truncated"] = True
+    return result
 
 
 def _content_blocks(events: Any, *, include_all: bool) -> list[dict[str, Any]]:

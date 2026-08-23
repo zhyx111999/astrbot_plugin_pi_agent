@@ -1059,18 +1059,22 @@ class PiConnectorPlugin(Star):
             return self._bridge_error(operation, safe_error_summary(exc))
 
     @filter.llm_tool(name="pi_task_result")
-    async def pi_task_result(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Read the accumulated result content and artifacts for a task.
+    async def pi_task_result(
+        self, event: AstrMessageEvent, task_id: str, offset: int = 0, limit: int = 4
+    ) -> str:
+        """Read a bounded page of task output and persisted artifacts.
 
         Args:
             task_id(string): Task id returned by pi_agent
+            offset(number): Zero-based result block offset
+            limit(number): Maximum result blocks to return
         """
         operation = "task_result"
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied, task_id=task_id)
         try:
             service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(service.result(task_id))
+            return self._bridge_dump(service.result(task_id, offset=offset, limit=limit))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
 
@@ -1166,7 +1170,15 @@ class PiConnectorPlugin(Star):
         try:
             service = await self._task_service_or_error()
             owner = None if self._can_manage_all_tasks(event) else self._task_owner_key(event)
-            return self._bridge_dump(service.session_list(owner_key=owner))
+            result = service.session_list(owner_key=owner)
+            if event.is_admin():
+                legacy, total = self.pi_connection_manager.list_sessions()
+                result["progress"]["legacy_sessions"] = [
+                    {"resource_type": "legacy_session", **info.__dict__}
+                    for info in legacy
+                ]
+                result["progress"]["legacy_count"] = total
+            return self._bridge_dump(result)
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc))
 

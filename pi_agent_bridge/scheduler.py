@@ -15,6 +15,7 @@ import inspect
 import logging
 import os
 import shutil
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,7 @@ class TaskScheduler:
         self.worker_config_factory = worker_config_factory
         self.task_update_callback = task_update_callback
         self._notified_task_states: set[tuple[str, str]] = set()
+        self._last_observed_at: dict[str, float] = {}
 
         self._adapters: dict[str, PiRpcAdapter] = {}
         self._observer_task: asyncio.Task[None] | None = None
@@ -581,6 +583,7 @@ class TaskScheduler:
         """
 
         task = self.registry.get_task(task_id)
+        self._last_observed_at[task_id] = time.time()
         if task.status in _TERMINAL_STATUSES:
             return task
 
@@ -771,6 +774,22 @@ class TaskScheduler:
         if clean_session:
             self._remove_owned_session(task)
         self._remove_agent_dir(task.task_id)
+
+    def observation_info(self, task_id: str) -> dict[str, Any]:
+        """Return observer timing diagnostics without contacting Pi."""
+
+        last = self._last_observed_at.get(task_id)
+        now = time.time()
+        return {
+            "interval_seconds": self.poll_interval_seconds,
+            "last_observed_at": last,
+            "seconds_since_last_observation": (now - last) if last else None,
+            "next_observation_in_seconds": max(
+                0.0, self.poll_interval_seconds - (now - last)
+            )
+            if last
+            else None,
+        }
 
     def adapter(self, task_id: str) -> PiRpcAdapter | None:
         """Return a live adapter for diagnostics and host integrations."""
