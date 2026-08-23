@@ -138,7 +138,7 @@ class PiRuntimeAdapter:
         fallback = self._resolve_path_fallback()
         if fallback is not None:
             return PiRuntimeResolution(
-                command=(fallback,),
+                command=fallback,
                 source="path",
                 platform_tag=self.platform_tag,
                 pi_version=None,
@@ -250,17 +250,43 @@ class PiRuntimeAdapter:
                 f"Bundled Pi version is {version!r}, expected {PI_VERSION!r}"
             )
 
-    def _resolve_path_fallback(self) -> str | None:
+    def _resolve_path_fallback(self) -> tuple[str, ...] | None:
         path = self.environment.get("PATH")
         candidates = ("pi", "pi.exe", "pi.cmd") if self.is_windows else ("pi",)
         for candidate in candidates:
             value = self._call_which(candidate, path)
             if value:
-                return self.normalize_path(value)
+                return self._command_for_pi_path(self.normalize_path(value))
         for candidate in self._user_install_candidates():
             if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
+                return self._command_for_pi_path(candidate)
         return None
+
+    def _command_for_pi_path(self, pi_path: str | Path) -> tuple[str, ...]:
+        """Run Node-based Pi scripts without relying on the service PATH."""
+
+        raw_path = os.fspath(pi_path)
+        path = Path(raw_path)
+        if self.is_windows or path.suffix.lower() not in {"", ".js"} or not path.is_file():
+            return (raw_path,)
+        try:
+            resolved = path.resolve(strict=True)
+            first_line = resolved.open(
+                "r", encoding="utf-8", errors="replace"
+            ).readline()
+        except (OSError, UnicodeDecodeError):
+            return (raw_path,)
+        if "node" not in first_line.lower():
+            return (raw_path,)
+        node_candidates = (
+            path.parent / "node",
+            resolved.parent / "node",
+            resolved.parent.parent / "bin" / "node",
+        )
+        for node in node_candidates:
+            if node.is_file() and os.access(node, os.X_OK):
+                return (str(node), str(resolved))
+        return (raw_path,)
 
     def _user_install_candidates(self) -> tuple[Path, ...]:
         """Find user-level Node installs when a service omits shell PATH setup."""
