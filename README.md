@@ -68,7 +68,7 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | 配置项 | 默认值 | 作用 |
 | --- | ---: | --- |
 | `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
-| `task_require_admin` | `false` | 为 `true` 时仅 AstrBot 管理员可使用异步任务工具；否则按任务 owner 隔离。 |
+| `task_require_admin` | `false` | 为 `true` 时，AstrBot 管理员可以查看和管理所有用户的 Pi 任务；普通用户始终只能管理自己的任务。关闭时所有用户都按任务 owner 隔离。 |
 | `pi_model` | `""` | 直接选择 AstrBot 中已经配置好的具体 Provider/模型。所有后台 Pi 任务固定使用这个模型，不继承当前聊天模型。仅支持 OpenAI-compatible Provider。 |
 | `state_directory` | `""` | 状态根目录；为空使用插件 `.pi`。 |
 | `task_database` | `""` | SQLite 路径；为空使用 `state_directory/tasks.db`。 |
@@ -94,14 +94,14 @@ Pi 官方运行时保持不变。配置的每个 Skill 目录会在对应 worker
 | --- | --- |
 | `pi_agent(prompt, workspace?)` | 创建独立长任务，立即返回 `task_id`。 |
 | `pi_task_status(task_id)` | 读取持久化任务状态和最新快照。 |
-| `pi_task_list()` | 列出当前 owner 可见的任务；管理员可见全部任务。 |
+| `pi_task_list()` | 列出当前用户可见的任务；只有开启管理员全局管理后，管理员才可见全部任务。 |
 | `pi_task_result(task_id)` | 读取最新快照中的文本/结构化内容，以及已持久化的 artifact。 |
 | `pi_task_poll(task_id)` | 刷新本地事件缓冲并返回最新 envelope；不请求远端 Pi 状态。 |
 | `pi_task_follow_up(task_id, message)` | 使用 Pi steer 向活动任务追加要求。 |
 | `pi_task_resume(task_id)` | 继续 `needs_user_decision` 或可恢复任务。 |
 | `pi_task_cancel(task_id)` | 取消 worker，但保留任务历史。 |
 | `pi_task_delete(task_id)` | 取消并删除任务元数据及任务拥有的资源。 |
-| `pi_session_list()` | 列出可见异步任务对应的 Pi session。 |
+| `pi_session_list()` | 列出当前用户可见的异步任务对应的 Pi session；只有开启管理员全局管理后，管理员才可见全部 session。 |
 | `pi_session_inspect(task_id)` | 查看任务关联的 session、路径和状态。 |
 | `pi_session_resume(task_id)` | 恢复任务关联的 Pi session。 |
 | `pi_session_delete(task_id)` | 删除任务关联的 session 与资源。 |

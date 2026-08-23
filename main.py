@@ -289,16 +289,18 @@ class PiConnectorPlugin(Star):
         return None
 
     def _require_task_permission(self, event: AstrMessageEvent) -> str | None:
-        """Apply the configurable guard to Pi background task tools."""
-        if self._config_bool("task_require_admin", False):
-            return self._require_admin(event)
+        """Keep async task access owner-scoped; the flag only grants admin-wide access."""
         return None
+
+    def _can_manage_all_tasks(self, event: AstrMessageEvent) -> bool:
+        """Return whether this admin may manage tasks owned by other users."""
+        return self._config_bool("task_require_admin", False) and event.is_admin()
 
     def _task_owner_key(self, event: AstrMessageEvent) -> str:
         return capture_task_context(event).owner_key
 
     def _task_is_visible(self, event: AstrMessageEvent, task) -> bool:
-        return task.owner_key == self._task_owner_key(event) or event.is_admin()
+        return task.owner_key == self._task_owner_key(event) or self._can_manage_all_tasks(event)
 
     @staticmethod
     def _bridge_error(
@@ -956,7 +958,7 @@ class PiConnectorPlugin(Star):
             return self._bridge_error(operation, denied)
         try:
             service = await self._task_service_or_error()
-            owner = None if event.is_admin() else self._task_owner_key(event)
+            owner = None if self._can_manage_all_tasks(event) else self._task_owner_key(event)
             return self._bridge_dump(service.list_tasks(owner_key=owner))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc))
@@ -1068,7 +1070,7 @@ class PiConnectorPlugin(Star):
             return self._bridge_error(operation, denied)
         try:
             service = await self._task_service_or_error()
-            owner = None if event.is_admin() else self._task_owner_key(event)
+            owner = None if self._can_manage_all_tasks(event) else self._task_owner_key(event)
             return self._bridge_dump(service.session_list(owner_key=owner))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc))

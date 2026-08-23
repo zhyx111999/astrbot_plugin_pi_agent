@@ -100,6 +100,30 @@ async def test_invalid_skill_path_does_not_block_plugin_service_creation(plugin,
 
 
 @pytest.mark.asyncio
+async def test_task_access_is_owner_scoped_by_default(plugin, tmp_path):
+    registry = TaskRegistry(tmp_path / "tasks.db")
+    owned = registry.create_task(owner_key="qq:owner", prompt="owned")
+    other = registry.create_task(owner_key="qq:other", prompt="other")
+    plugin._task_registry = registry
+    plugin.plugin_config = {"task_require_admin": False}
+
+    owner = _event("qq:owner")
+    outsider = _event("qq:other")
+    assert plugin._visible_task(owner, owned.task_id) is not None
+    assert plugin._visible_task(owner, other.task_id) is None
+    assert plugin._visible_task(outsider, other.task_id) is not None
+    registry.close()
+
+
+def test_admin_global_task_access_requires_switch(plugin):
+    admin = _event("qq:admin", admin=True)
+    plugin.plugin_config = {"task_require_admin": False}
+    assert plugin._can_manage_all_tasks(admin) is False
+    plugin.plugin_config = {"task_require_admin": True}
+    assert plugin._can_manage_all_tasks(admin) is True
+
+
+@pytest.mark.asyncio
 async def test_pi_agent_can_disable_persona_inheritance(plugin):
     plugin.plugin_config = {
         "inherit_persona": False,

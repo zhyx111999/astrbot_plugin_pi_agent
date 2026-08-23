@@ -7,8 +7,8 @@
   },
   "task_require_admin": {
     "type": "bool",
-    "description": "仅允许 AstrBot 管理员使用 Pi 任务工具",
-    "hint": "关闭后，调用者只能访问当前 AstrBot 会话所拥有的任务。",
+    "description": "允许管理员管理所有用户的 Pi 任务",
+    "hint": "关闭时每个用户只能查看和管理自己创建的任务；开启后，AstrBot 管理员可以查看、追问、恢复、取消、删除和管理任意用户的任务。普通用户始终只能管理自己的任务。",
     "default": false
   },
   "pi_model": {

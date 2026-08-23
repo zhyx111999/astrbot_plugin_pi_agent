@@ -31,7 +31,7 @@ There is no hard task timeout and no idle timeout. `command_timeout_seconds` bou
 
 - `pi_agent(prompt: string, workspace?: string)` — create an isolated task and return immediately.
 - `pi_task_status(task_id: string)` — read status, owner-scoped metadata, and latest snapshot.
-- `pi_task_list()` — list visible tasks.
+- `pi_task_list()` — list tasks visible to the current user; only an administrator with global management enabled sees all tasks.
 - `pi_task_result(task_id: string)` — read the latest snapshot content and persisted artifacts.
 - `pi_task_poll(task_id: string)` — drain local buffered events and return the latest observation without a remote Pi request.
 - `pi_task_follow_up(task_id: string, message: string)` — steer an active worker with an added requirement.
@@ -44,7 +44,7 @@ There is no hard task timeout and no idle timeout. `command_timeout_seconds` bou
 - `pi_session_delete(task_id: string)` — remove that session and its task resources.
 - `pi_artifact_inspect(task_id: string)` — inspect text, JSON, Markdown, files, and media artifacts.
 
-Every async tool returns a JSON envelope with `schema_version`, `ok`, `operation`, `task_id`, `status`, `has_new_meaningful_event`, `progress`, `content`, `artifacts`, and `error`. Treat both success and failure as model input. Never expose a raw exception directly to the user; explain the structured error in the current assistant voice.
+- All async task tools are owner-scoped by default. Every user can inspect and manage their own tasks, but cannot inspect, steer, resume, cancel, delete, or inspect artifacts belonging to another user. When `task_require_admin` is enabled, AstrBot administrators may manage any user's tasks; ordinary users remain owner-scoped.
 
 ## Context, provider, Skill, and MCP
 
