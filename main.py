@@ -940,15 +940,15 @@ class PiConnectorPlugin(Star):
         prompt: str,
         workspace: str = "",
     ) -> str:
-        """Use Pi as AstrBot's code agent executor for long-running work.
+        """Use Pi as AstrBot's general-purpose Agent executor for long-running work.
 
-        Pi can act as a code agent for generating, modifying, refactoring,
-        testing, debugging, and running code or scripts, and can delegate
-        long-running or multi-step work to an isolated worker. Use it for
-        sustained research, coding, automation, multi-agent work, or tasks
-        that should run in the background while AstrBot continues handling the
-        main conversation. This call returns a task_id immediately; AstrBot
-        uses the task tools afterward to inspect and manage the task. Simple
+        Pi is a versatile Agent that can handle code, scripts, research,
+        automation, file operations, tool-driven workflows, and other
+        long-running or multi-step work in an isolated worker. Use it for
+        sustained research, coding, testing, multi-agent work, or tasks that
+        should run in the background while AstrBot continues handling the main
+        conversation. This call returns a task_id immediately; AstrBot uses
+        the task tools afterward to inspect and manage the task. Simple
         questions and short tool calls belong to AstrBot.
 
         Args:

@@ -1,13 +1,13 @@
 ---
 name: pi-connector
-description: Use Pi as AstrBot's code agent executor for code, scripts, and long-running multi-step work in an isolated Pi worker while AstrBot remains available for the main conversation.
+description: Use Pi as AstrBot's general-purpose Agent executor for code, scripts, research, automation, and long-running multi-step work in an isolated Pi worker while AstrBot remains available for the main conversation.
 ---
 
 # Pi Agent Bridge
 
 ## Core Role
 
-Pi is AstrBot's code agent executor and an isolated worker for long-running or multi-step work. It can generate, modify, refactor, test, debug, and run code or scripts. Use it for sustained research, coding, automation, multi-agent work, or tasks that should run in the background while AstrBot continues handling other messages.
+Pi is AstrBot's general-purpose Agent executor and an isolated worker for long-running or multi-step work. It can handle code, scripts, research, automation, file operations, tool-driven workflows, and other engineering or knowledge tasks. Use it for sustained research, coding, testing, multi-agent work, or tasks that should run in the background while AstrBot continues handling other messages.
 
 Calling `pi_agent` returns a `task_id` immediately. AstrBot then uses the task tools to inspect, read, and manage the delegated work. Simple questions and short tool calls belong to AstrBot's own agent.
 

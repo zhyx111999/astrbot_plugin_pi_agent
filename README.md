@@ -1,6 +1,6 @@
 # astrbot_plugin_pi_agent
 
-一个独立维护的 AGPL-3.0 AstrBot 插件，将本地 [Pi](https://github.com/earendil-works/pi) 作为长任务 worker 接入 AstrBot。Pi 作为 AstrBot 的代码 Agent 执行器，适合生成、修改、重构、测试、调试和运行代码或脚本，也适合持续研究、多步骤工程和后台任务；AstrBot 负责分配、检查、读取和管理。
+一个独立维护的 AGPL-3.0 AstrBot 插件，将本地 [Pi](https://github.com/earendil-works/pi) 作为长任务 worker 接入 AstrBot。Pi 作为 AstrBot 的通用 Agent 执行器，适合处理代码、脚本、研究、自动化、文件操作、工具驱动流程以及其他长期、多步骤任务；AstrBot 负责分配、检查、读取和管理。
 
 它解决的是 AstrBot Agent 会话不适合长时间占用的问题：主模型调用 `pi_agent` 后立即拿到 `task_id`，Pi 在独立进程和独立 session 中继续工作；主模型可以在后续回合通过短调用读取最新快照，同时正常处理当前会话的其他消息。
 
@@ -99,7 +99,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 
 | 工具 | 作用 |
 | --- | --- |
-| `pi_agent(prompt, workspace?)` | 创建新的隔离 Pi 任务，适合代码 Agent 执行代码/脚本生成、修改、重构、测试、调试、自动化、研究和其他多步骤工程工作；立即返回 `task_id`。 |
+| `pi_agent(prompt, workspace?)` | 创建新的隔离 Pi 任务，适合通用 Agent 执行代码、脚本、研究、自动化、文件操作、工具驱动流程和其他长期、多步骤工作；立即返回 `task_id`。 |
 | `pi_task_status(task_id)` | 读取持久化 AstrBot 任务控制元数据，不返回 Pi 事件。 |
 | `pi_task_list()` | 列出全部登记的异步 Pi 任务，包含 owner 和 task/session 元数据。 |
 | `pi_task_read(task_id, cursor?, limit?)` | 只读指定任务的原始 Pi 事件页；按 cursor 继续读取。 |
