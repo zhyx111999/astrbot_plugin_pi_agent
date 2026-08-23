@@ -1,63 +1,63 @@
 {
   "enable_async_tasks": {
     "type": "bool",
-    "description": "Enable the independent Pi background task bridge",
-    "hint": "When disabled, the legacy /pi and /pic session route remains available; no Pi background worker is created.",
+    "description": "启用独立的 Pi 后台任务桥接",
+    "hint": "关闭后仍保留旧版 /pi 和 /pic 会话线路，不会创建 Pi 后台工作进程。",
     "default": true
   },
   "task_require_admin": {
     "type": "bool",
-    "description": "Restrict Pi task tools to AstrBot administrators",
-    "hint": "When disabled, a caller can access only tasks owned by the current AstrBot conversation.",
+    "description": "仅允许 AstrBot 管理员使用 Pi 任务工具",
+    "hint": "关闭后，调用者只能访问当前 AstrBot 会话所拥有的任务。",
     "default": false
   },
   "pi_provider_id": {
     "type": "string",
-    "description": "AstrBot provider used by Pi workers",
-    "hint": "Leave empty to use the provider selected for the current chat. The initial bridge supports OpenAI-compatible providers only; provider keys are passed only to the worker environment.",
+    "description": "Pi 工作进程使用的 AstrBot Provider",
+    "hint": "留空则使用当前聊天选中的 Provider。当前桥接仅支持 OpenAI 兼容 Provider，Provider 密钥只会传入工作进程环境。",
     "_special": "select_provider",
     "default": ""
   },
   "pi_model": {
     "type": "string",
-    "description": "Optional Pi model override",
-    "hint": "Leave empty to use the selected AstrBot provider's active model.",
+    "description": "可选的 Pi 模型覆盖值",
+    "hint": "留空则使用所选 AstrBot Provider 的当前模型。",
     "default": ""
   },
   "pi_executable": {
     "type": "string",
-    "description": "Optional Pi executable path override",
-    "hint": "Provide one executable path only. Leave empty to prefer the plugin-owned Node 22.19.0 and Pi 0.84.2 runtime, then fall back to pi on PATH. This is not a task timeout setting.",
+    "description": "可选的 Pi 可执行文件路径",
+    "hint": "只填写一个可执行文件路径。留空则优先使用插件自带的 Node 22.19.0 和 Pi 0.84.2 运行时，找不到时再使用 PATH 中的 pi。此项不是任务超时设置。",
     "default": ""
   },
   "pi_session_dir": {
     "type": "string",
-    "description": "Optional native Pi session directory for the legacy /pi route",
-    "hint": "Background tasks always receive their own isolated Pi session and workspace.",
+    "description": "旧版 /pi 会话线路使用的可选 Pi 原生会话目录",
+    "hint": "后台任务始终使用独立的 Pi 会话和工作区。",
     "default": ""
   },
   "state_directory": {
     "type": "string",
-    "description": "Persistent bridge state directory",
-    "hint": "Leave empty to use the plugin .pi directory. Contains the SQLite WAL registry, plugin-managed task sessions, per-task agent configuration, default workspaces, and artifact metadata.",
+    "description": "桥接服务的持久化状态目录",
+    "hint": "留空则使用插件 .pi 目录。该目录包含 SQLite WAL 任务注册表、插件管理的任务会话、每个任务的 Agent 配置、默认工作区和 artifact 元数据。",
     "default": ""
   },
   "task_database": {
     "type": "string",
-    "description": "SQLite WAL registry path",
-    "hint": "Leave empty to use state_directory/tasks.db.",
+    "description": "SQLite WAL 任务注册表路径",
+    "hint": "留空则使用 state_directory/tasks.db。",
     "default": ""
   },
   "workspace_root": {
     "type": "string",
-    "description": "Root directory for task-owned workspaces",
-    "hint": "Leave empty to use state_directory/workspaces. Each pi_agent task receives a distinct subdirectory.",
+    "description": "任务工作区根目录",
+    "hint": "留空则使用 state_directory/workspaces。每个 pi_agent 任务都会获得一个独立子目录。",
     "default": ""
   },
   "poll_interval_seconds": {
     "type": "int",
-    "description": "Seconds between background observation snapshots",
-    "hint": "This affects the observer only. Pi work is never stopped because an observation cycle is slow or empty.",
+    "description": "后台观察快照的间隔秒数",
+    "hint": "此项只影响后台观察器。即使观察周期较慢或没有输出，也不会停止 Pi 任务。",
     "default": 60,
     "slider": {
       "min": 1,
@@ -67,8 +67,8 @@
   },
   "no_meaningful_event_limit": {
     "type": "int",
-    "description": "Empty observation cycles before needs_user_decision",
-    "hint": "Meaningful output, tool transitions, status changes, and new artifacts reset the counter. The worker is retained when the limit is reached.",
+    "description": "进入 needs_user_decision 前允许的无进展观察次数",
+    "hint": "有意义的输出、工具状态变化、任务状态变化和新 artifact 都会重置计数。达到上限后仍会保留工作进程。",
     "default": 3,
     "slider": {
       "min": 1,
@@ -78,8 +78,8 @@
   },
   "session_retention_hours": {
     "type": "int",
-    "description": "Retention period for terminal task metadata and managed artifacts",
-    "hint": "Only completed, failed, and cancelled tasks are eligible for retention cleanup. Running, paused, and orphaned tasks are retained.",
+    "description": "已结束任务元数据和托管 artifact 的保留时长",
+    "hint": "只有已完成、失败和已取消的任务会参与清理。运行中、暂停中和 orphaned 状态的任务会保留。",
     "default": 24,
     "slider": {
       "min": 1,
@@ -89,8 +89,8 @@
   },
   "max_concurrent_tasks": {
     "type": "int",
-    "description": "Maximum independent Pi workers running at once",
-    "hint": "Each task has an isolated Pi process and session. This limit does not block normal AstrBot chat turns.",
+    "description": "同时运行的独立 Pi 工作进程数量上限",
+    "hint": "每个任务都有独立的 Pi 进程和会话。此限制不会阻塞 AstrBot 的普通聊天回合。",
     "default": 4,
     "slider": {
       "min": 1,
@@ -100,32 +100,32 @@
   },
   "command_timeout_seconds": {
     "type": "float",
-    "description": "Timeout for Pi RPC control acknowledgements only",
-    "hint": "This is not a hard task timeout and not an idle timeout. It bounds the observer's get_state request and short steer, cancel, and resume acknowledgements. pi_task_poll reads local buffered events and the latest durable snapshot without waiting for Pi.",
+    "description": "仅用于 Pi RPC 控制确认的超时时间",
+    "hint": "这不是任务硬超时，也不是空闲超时。它限制后台观察器的 get_state 请求，以及 steer、cancel、resume 等短控制操作的确认时间。pi_task_poll 只读取本地缓冲事件和最新持久化快照，不等待 Pi。",
     "default": 10.0
   },
   "inherit_persona": {
     "type": "bool",
-    "description": "Copy the current AstrBot persona into new Pi tasks",
-    "hint": "The persona plus the current event's public fields and source message are copied at creation time. Later chat messages are not synchronized automatically; use pi_task_follow_up to add requirements.",
+    "description": "将当前 AstrBot 人设复制到新建的 Pi 任务",
+    "hint": "创建任务时会复制人设、当前事件的公开字段和源消息。之后的新聊天消息不会自动同步，请使用 pi_task_follow_up 追加要求。",
     "default": true
   },
   "media_capture_timeout_seconds": {
     "type": "float",
-    "description": "Timeout for copying one event media component into a task workspace",
-    "hint": "This only bounds media preparation at task creation. It is not a Pi task timeout; failed conversion is returned as a capture warning.",
+    "description": "复制单个事件媒体组件到任务工作区的超时时间",
+    "hint": "此项只限制任务创建时的媒体准备过程，不是 Pi 任务超时。转换失败时会作为媒体捕获警告返回。",
     "default": 10.0
   },
   "pi_skill_paths": {
     "type": "list",
-    "description": "Additional Pi Skill directories",
-    "hint": "Each existing path is passed to the task worker as a repeated public Pi CLI --skill argument. Passing a path does not guarantee that Pi loaded the Skill; inspect the task snapshot or result for runtime evidence.",
+    "description": "追加的 Pi Skill 目录",
+    "hint": "每个存在的路径都会通过重复的公共 Pi CLI --skill 参数传给任务工作进程。传入路径不代表 Pi 一定成功加载 Skill，请检查任务快照或结果中的运行时证据。",
     "default": []
   },
   "pi_mcp_config_paths": {
     "type": "list",
-    "description": "External Pi extension or MCP configuration paths",
-    "hint": "Current capability boundary: any non-empty value returns a structured unsupported-capability envelope from pi_agent. The bridge does not pass these paths to Pi and never imports AstrBot MCP servers automatically.",
+    "description": "外部 Pi 扩展或 MCP 配置路径",
+    "hint": "当前能力边界：只要填写非空值，pi_agent 就会返回结构化的不支持能力结果。桥接层不会将这些路径传给 Pi，也不会自动导入 AstrBot 的 MCP 服务。",
     "default": []
   }
 }
