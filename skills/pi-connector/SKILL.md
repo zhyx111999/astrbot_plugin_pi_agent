@@ -26,7 +26,7 @@ At creation time, the new task receives a one-time snapshot of the current AstrB
 3. When the user asks about Pi work, call `pi_task_list` to find the relevant task. The directory contains all registered tasks, including tasks owned by other users.
 4. Call `pi_task_status` for control metadata without Pi content.
 5. Call `pi_task_poll` when AstrBot explicitly needs one short Pi state observation. It returns control metadata only and does not return Pi events.
-6. When the event cursor advances or the user asks to inspect the work, call `pi_task_read(task_id, cursor?, limit?)` to read raw Pi events. Do not treat the output as an automatic user-facing reply; AstrBot decides how to interpret it.
+6. When the user asks to inspect the work, call `pi_task_read(task_id, cursor?, limit?)` to read raw lines from the task's native Pi session JSONL file. The plugin does not parse, summarize, classify, or rewrite these lines; AstrBot reads the complete session itself. Use the returned line cursor to continue.
 7. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
 8. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
@@ -38,8 +38,8 @@ Do not repeatedly poll without a reason. Do not infer a failure or a need for us
 - `pi_task_list()`: List all registered async Pi tasks for AstrBot to select.
 - `pi_task_status(task_id: string)`: Read AstrBot task control metadata without Pi event content.
 - `pi_task_poll(task_id: string)`: Explicitly request one short Pi state observation; return control metadata only.
-- `pi_task_read(task_id: string, cursor?: number, limit?: number)`: Read raw Pi events after a cursor without semantic rewriting.
-- `pi_task_result(task_id: string, offset?: number, limit?: number)`: Compatibility alias for `pi_task_read`; `offset` is the Pi event cursor.
+- `pi_task_read(task_id: string, cursor?: number, limit?: number)`: Read raw native Pi session JSONL lines after a zero-based line cursor. No semantic rewriting is performed.
+- `pi_task_result(task_id: string, offset?: number, limit?: number)`: Compatibility alias for `pi_task_read`; `offset` is the native session line cursor.
 - `pi_task_follow_up(task_id: string, message: string)`: Send an explicit additional requirement to the existing Pi session.
 - `pi_task_resume(task_id: string)`: Resume an existing task/session without rebuilding its original context.
 - `pi_task_cancel(task_id: string)`: Cancel a task while retaining its durable history.
@@ -64,13 +64,14 @@ Read and write permissions are separate:
 - All async tasks use the fixed `pi_model` Provider/model selected in the plugin configuration, not the model selected by the current chat.
 - Provider fields configured by AstrBot are mapped to the task-local Pi model configuration. Fields that AstrBot does not configure are omitted so Pi uses its own defaults.
 - The new task gets the current AstrBot persona, conversation, event, user message, and available media as a creation-time snapshot only.
+- `pi_task_read` reads the corresponding native Pi session JSONL directly. The plugin does not build a second content history, summarize errors, classify progress, or extract results from that session.
 - Follow-ups add only the explicit message supplied by AstrBot; they do not copy the caller's full AstrBot context.
 - AstrBot tools, MCP servers, Skills, and extensions are not inherited automatically. Only paths explicitly configured in `pi_skill_paths` and `pi_extension_paths` are passed to Pi. Pi built-in tools remain enabled.
 - Keep `pi_mcp_config_paths` empty because this bridge does not provide a native Pi MCP integration.
 
 ## Silent Worker Boundary
 
-Pi's JSONL events are consumed internally by the plugin and retained for AstrBot to read. The worker cannot send AstrBot chat messages. The observer never wakes the main model and never sends completion, failure, progress, or idle notifications. `status` and `poll` expose only task-control metadata; `read` is the explicit raw-session channel.
+Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer never wakes the main model and never sends completion, failure, progress, or idle notifications. `status` and `poll` expose only task-control metadata; `read` is the explicit native-session channel.
 
 ## Legacy Synchronous Route
 

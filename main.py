@@ -256,9 +256,6 @@ class PiConnectorPlugin(Star):
                 poll_interval_seconds=int(
                     self._config_value("poll_interval_seconds", 60)
                 ),
-                no_meaningful_event_limit=int(
-                    self._config_value("no_meaningful_event_limit", 3)
-                ),
                 max_concurrent_tasks=int(
                     self._config_value("max_concurrent_tasks", 4)
                 ),
@@ -376,7 +373,6 @@ class PiConnectorPlugin(Star):
                 "operation": operation,
                 "task_id": task_id,
                 "status": None,
-                "has_new_meaningful_event": False,
                 "progress": {},
                 "content": [],
                 "artifacts": [],
@@ -1016,10 +1012,7 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_status")
     async def pi_task_status(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Read AstrBot task control metadata without Pi event content.
-
-        This is read-only and does not inject the current caller's context
-        into the task or change its Pi session.
+        """Read AstrBot task and native-session metadata without session content.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1053,15 +1046,16 @@ class PiConnectorPlugin(Star):
     async def pi_task_read(
         self, event: AstrMessageEvent, task_id: str, cursor: int = 0, limit: int = 100
     ) -> str:
-        """Read raw Pi events for AstrBot to inspect, without semantic rewriting.
+        """Read raw lines from the selected task's native Pi session JSONL.
 
-        This is read-only. It does not inject the current caller's persona,
-        conversation, event, or model into the existing task.
+        AstrBot receives the session data directly and decides how to parse it.
+        This read-only operation does not summarize, classify, or rewrite the
+        session and never injects the current caller's context.
 
         Args:
             task_id(string): Task id returned by pi_agent
-            cursor(number): Read events strictly after this Pi event cursor
-            limit(number): Maximum raw events to return
+            cursor(number): Zero-based session line cursor to continue from
+            limit(number): Maximum native session lines to return
         """
         operation = "task_read"
         if denied := self._require_task_permission(event):
@@ -1076,15 +1070,15 @@ class PiConnectorPlugin(Star):
     async def pi_task_result(
         self, event: AstrMessageEvent, task_id: str, offset: int = 0, limit: int = 100
     ) -> str:
-        """Compatibility alias for pi_task_read; return raw Pi events by cursor.
+        """Compatibility alias for pi_task_read; return native session lines.
 
-        This is not a summarized final-answer endpoint. AstrBot decides how
-        to interpret the returned Pi session content.
+        This is not a summarized final-answer endpoint. AstrBot reads and
+        interprets the selected Pi session itself.
 
         Args:
             task_id(string): Task id returned by pi_agent
-            offset(number): Pi event cursor to read after
-            limit(number): Maximum raw events to return
+            offset(number): Zero-based session line cursor to continue from
+            limit(number): Maximum native session lines to return
         """
         operation = "task_result"
         if denied := self._require_task_permission(event):
@@ -1249,7 +1243,6 @@ class PiConnectorPlugin(Star):
                     "operation": operation,
                     "task_id": None,
                     "status": "legacy_session",
-                    "has_new_meaningful_event": False,
                     "progress": {"session": info.__dict__},
                     "content": [],
                     "artifacts": [],
@@ -1307,7 +1300,6 @@ class PiConnectorPlugin(Star):
                     "operation": operation,
                     "task_id": None,
                     "status": "legacy_session_deleted",
-                    "has_new_meaningful_event": False,
                     "progress": {},
                     "content": [],
                     "artifacts": [],

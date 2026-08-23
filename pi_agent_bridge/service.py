@@ -6,6 +6,7 @@ import asyncio
 import json
 import inspect
 import uuid
+from pathlib import Path
 from collections.abc import Mapping
 from typing import Any
 
@@ -117,27 +118,7 @@ class PiTaskService:
         self._launch_tasks.discard(launch)
         self._launch_task_ids.pop(launch, None)
 
-    def _mark_start_failure(self, task_id: str, exc: Exception) -> None:
-        try:
-            current = self.registry.get_task(task_id)
-        except TaskNotFoundError:
-            return
-        snapshot = {
-            "phase": "failed_to_start",
-            "error": {
-                "type": type(exc).__name__,
-                "message": safe_error_summary(exc),
-            },
-        }
-        try:
-            self.registry.record_snapshot(
-                task_id,
-                snapshot,
-                has_meaningful_event=True,
-                event_cursor=current.event_cursor,
-            )
-        except TaskNotFoundError:
-            return
+    def _mark_start_failure(self, task_id: str, _exc: Exception) -> None:
         try:
             current = self.registry.get_task(task_id)
             if current.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
@@ -171,21 +152,8 @@ class PiTaskService:
 
         try:
             current = self.registry.get_task(task_id)
-            if current.status is not TaskStatus.QUEUED:
-                return
-            self.registry.record_snapshot(
-                task_id,
-                {
-                    "phase": "cancelled_before_start",
-                    "error": {
-                        "type": "service_shutdown",
-                        "message": "Pi worker launch was cancelled before startup",
-                    },
-                },
-                has_meaningful_event=True,
-                event_cursor=current.event_cursor,
-            )
-            self.registry.transition_status(task_id, TaskStatus.FAILED)
+            if current.status is TaskStatus.QUEUED:
+                self.registry.transition_status(task_id, TaskStatus.FAILED)
         except (TaskNotFoundError, InvalidTaskTransition):
             return
 
@@ -230,7 +198,7 @@ class PiTaskService:
     def result(
         self, task_id: str, *, offset: int = 0, limit: int = 100
     ) -> dict[str, Any]:
-        """Compatibility alias for direct raw Pi event reading."""
+        """Compatibility alias for direct native Pi session reading."""
 
         result = self.read(task_id, cursor=offset, limit=limit)
         result["operation"] = "task_result"
@@ -239,23 +207,23 @@ class PiTaskService:
     def read(
         self, task_id: str, *, cursor: int = 0, limit: int = 100
     ) -> dict[str, Any]:
-        """Return a cursor page of raw Pi events without semantic conversion."""
+        """Return raw lines from the task's native Pi session JSONL file."""
 
         try:
             if cursor < 0 or limit < 1:
                 raise ValueError("cursor must be non-negative and limit must be positive")
-            events = _raw_events(self.registry.list_snapshots(task_id), cursor=cursor)
-            page = events[:limit]
-            next_cursor = cursor
-            if page:
-                next_cursor = _event_cursor(page[-1], default=cursor)
+            task = self.registry.get_task(task_id)
+            lines = _read_session_lines(task.session_path, cursor=cursor, limit=limit)
+            next_cursor = cursor + len(lines)
             result = self.envelope("task_read", task_id)
-            result["events"] = page
+            result["session_lines"] = lines
             result["progress"]["read"] = {
                 "cursor": cursor,
                 "next_cursor": next_cursor,
-                "returned": len(page),
-                "has_more": len(events) > len(page),
+                "returned": len(lines),
+                "has_more": _session_has_more(task.session_path, next_cursor),
+                "source": "pi_native_session_jsonl",
+                "session_path": task.session_path,
             }
             return result
         except Exception as exc:  # noqa: BLE001
@@ -337,21 +305,19 @@ class PiTaskService:
         """Return task control metadata without Pi event content."""
 
         task = self.registry.get_task(task_id)
-        snapshot = self.registry.get_latest_snapshot(task_id)
         return self.ok(
             operation,
             task_id=task.task_id,
             status=task.status.value,
             progress={
                 "task": self._task_dict(task),
-                "latest_snapshot_id": snapshot.snapshot_id if snapshot else None,
-                "latest_snapshot_at": snapshot.created_at if snapshot else None,
+                "session": {
+                    "session_id": task.session_id,
+                    "session_path": task.session_path,
+                    "source": "pi_native_session_jsonl",
+                },
                 "observer": self.scheduler.observation_info(task_id),
             },
-            artifacts=[
-                self._artifact_dict(item)
-                for item in self.registry.list_artifacts(task_id)
-            ],
         )
 
     def ok(
@@ -360,7 +326,6 @@ class PiTaskService:
         *,
         task_id: str | None = None,
         status: str | None = None,
-        has_new_meaningful_event: bool = False,
         progress: Mapping[str, Any] | None = None,
         content: list[dict[str, Any]] | None = None,
         artifacts: list[dict[str, Any]] | None = None,
@@ -371,7 +336,6 @@ class PiTaskService:
             "operation": operation,
             "task_id": task_id,
             "status": status,
-            "has_new_meaningful_event": has_new_meaningful_event,
             "progress": dict(progress or {}),
             "content": list(content or []),
             "artifacts": list(artifacts or []),
@@ -391,7 +355,6 @@ class PiTaskService:
             "operation": operation,
             "task_id": task_id,
             "status": None,
-            "has_new_meaningful_event": False,
             "progress": {},
             "content": [],
             "artifacts": [],
@@ -431,21 +394,33 @@ class PiTaskService:
         }
 
 
-def _event_cursor(event: Mapping[str, Any], *, default: int) -> int:
-    try:
-        return max(default, int(event.get("cursor", default)))
-    except (TypeError, ValueError):
-        return default
+def _read_session_lines(
+    session_path: str | None, *, cursor: int, limit: int
+) -> list[str]:
+    if not session_path:
+        return []
+    path = Path(session_path).expanduser()
+    if not path.is_file():
+        return []
+    lines: list[str] = []
+    with path.open("rb") as stream:
+        for index, line in enumerate(stream):
+            if index < cursor:
+                continue
+            if len(lines) >= limit:
+                break
+            lines.append(line.decode("utf-8", errors="replace"))
+    return lines
 
 
-def _raw_events(snapshots: list[Any], *, cursor: int) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for snapshot in snapshots:
-        payload = getattr(snapshot, "payload", {})
-        raw = payload.get("events", []) if isinstance(payload, Mapping) else []
-        if not isinstance(raw, list):
-            continue
-        for event in raw:
-            if isinstance(event, dict) and _event_cursor(event, default=0) > cursor:
-                events.append(event)
-    return events
+def _session_has_more(session_path: str | None, cursor: int) -> bool:
+    if not session_path:
+        return False
+    path = Path(session_path).expanduser()
+    if not path.is_file():
+        return False
+    with path.open("rb") as stream:
+        for index, _line in enumerate(stream):
+            if index >= cursor:
+                return True
+    return False

@@ -181,10 +181,10 @@ async def test_restart_marks_dead_worker_orphaned_with_structured_snapshot(tmp_p
     await scheduler.start()
     orphaned = registry.get_task(task.task_id)
     snapshot = registry.get_latest_snapshot(task.task_id)
+    assert snapshot is None
     assert orphaned.status is TaskStatus.ORPHANED
     assert orphaned.process_id is None
-    assert snapshot is not None
-    assert snapshot.payload["phase"] == "orphaned"
+    assert registry.get_latest_snapshot(task.task_id) is None
     assert factory.takeover_calls == []
 
     await scheduler.shutdown()

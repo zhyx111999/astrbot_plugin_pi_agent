@@ -210,7 +210,6 @@ async def test_pi_agent_rejects_mcp_config_with_structured_envelope(plugin):
     assert result["operation"] == "task_create"
     assert result["task_id"] is None
     assert result["status"] is None
-    assert result["has_new_meaningful_event"] is False
     assert result["progress"] == {}
     assert result["content"] == []
     assert result["artifacts"] == []

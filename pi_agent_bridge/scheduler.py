@@ -3,9 +3,8 @@
 The scheduler owns process lifecycles, while :class:`TaskRegistry` owns the
 durable task state. Public methods perform one bounded operation only: no
 method waits for a Pi turn to finish and there is deliberately no task or
-idle timeout. The observer merely records snapshots at a configurable
-interval; the main model remains free to poll those snapshots whenever it is
-ready.
+idle timeout. The scheduler only manages worker lifecycle and records task metadata. Pi
+session content remains in Pi's native JSONL file for AstrBot to read directly.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .artifacts import discover_workspace_artifacts
 from .models import TaskRecord, TaskStatus
 from .registry import InvalidTaskTransition, TaskNotFoundError, TaskRegistry
 from .rpc import PiRpcAdapter, PiRpcError
@@ -598,56 +596,23 @@ class TaskScheduler:
                     return self.registry.get_task(task_id)
             return task
 
+        await self._poll_pi_state(adapter)
         after_cursor = _cursor_value(task.event_cursor)
         events = adapter.drain_events(after_cursor=after_cursor)
-        pi_state, state_error = await self._poll_pi_state(adapter)
-        previous_snapshot = self.registry.get_latest_snapshot(task_id)
-        state_changed = _pi_state_changed(
-            previous_snapshot.payload if previous_snapshot is not None else None,
-            pi_state,
-        )
-        # A manually inspected paused task can still expose fresh Pi state,
-        # but an unchanged observation must not continue incrementing the
-        # no-progress counter after the user-decision threshold was reached.
-        if (
-            task.status is TaskStatus.NEEDS_USER_DECISION
-            and not events
-            and not state_changed
-            and state_error is None
-        ):
-            return task
-        meaningful = any(event.meaningful for event in events) or state_changed
-        snapshot = adapter.snapshot()
-        snapshot["events"] = [event.as_dict() for event in events]
-        snapshot["pi_state"] = pi_state
-        if state_error is not None:
-            snapshot["state_poll_error"] = state_error
-        snapshot["artifacts"] = discover_workspace_artifacts(
-            task.workspace or self.workspace_root / task_id
-        )
-        snapshot["phase"] = _phase(events, snapshot)
-        finished = _agent_finished(events)
-        failed = _worker_failed(events, snapshot)
-        if failed:
-            snapshot["phase"] = "failed"
-        elif finished:
-            snapshot["phase"] = "completed"
         cursor = str(getattr(adapter, "event_cursor", task.event_cursor or "0"))
-        updated, _, _ = self.registry.record_snapshot(
-            task_id,
-            snapshot,
-            has_meaningful_event=meaningful,
-            event_cursor=cursor,
-            no_meaningful_event_limit=self.no_meaningful_event_limit,
-        )
-        self._store_new_artifacts(task_id, snapshot["artifacts"])
+        updated = self.registry.update_event_cursor(task_id, cursor)
 
-        if failed and updated.status in _ACTIVE_STATUSES:
+        # Do not inspect or persist Pi event payloads. Only the child-process
+        # lifecycle is reflected in AstrBot task metadata; the native session
+        # remains the sole source of task content.
+        returncode = getattr(adapter, "returncode", None)
+        agent_finished = any(
+            getattr(event, "type", None) == "agent_end" for event in events
+        )
+        if not adapter.is_running and returncode not in {None, 0}:
             updated = self.registry.transition_status(task_id, TaskStatus.FAILED)
-        elif finished and updated.status in _ACTIVE_STATUSES:
+        elif agent_finished and updated.status in _ACTIVE_STATUSES:
             updated = self.registry.transition_status(task_id, TaskStatus.COMPLETED)
-        if updated.status in _TERMINAL_STATUSES:
-            await self._release_terminal_worker(task_id, adapter)
         return updated
 
     async def _poll_pi_state(
@@ -656,9 +621,8 @@ class TaskScheduler:
         """Request one bounded remote Pi state snapshot for an observation.
 
         ``get_state`` is a short RPC control call, never a wait for agent
-        completion. If Pi cannot acknowledge it, preserve a sanitized error in
-        the latest snapshot and let the normal no-progress state machine decide
-        whether user intervention is needed.
+        completion. Its response is used only to verify the worker transport;
+        it is not persisted as Pi session content or returned by this method.
         """
 
         try:
@@ -824,15 +788,6 @@ class TaskScheduler:
             raise PiRpcError("Pi worker is unavailable for this task")
         return adapter
 
-    def _store_new_artifacts(self, task_id: str, items: list[dict[str, Any]]) -> None:
-        known_paths = {artifact.path for artifact in self.registry.list_artifacts(task_id)}
-        for item in items:
-            path = item.get("path")
-            if not isinstance(path, str) or path in known_paths:
-                continue
-            self.registry.add_artifact(task_id, **item)
-            known_paths.add(path)
-
     def _remove_workspace(self, workspace: str) -> None:
         root = Path(workspace).expanduser().resolve(strict=False)
         allowed = self.workspace_root
@@ -894,50 +849,19 @@ class TaskScheduler:
         *,
         clear_process: bool = True,
     ) -> TaskRecord | None:
-        """Persist a meaningful recovery diagnostic without exposing an exception."""
+        """Mark a lost worker without copying its Pi session content."""
 
+        del reason
         try:
             task = self.registry.get_task(task_id)
             if task.status in _TERMINAL_STATUSES:
                 return task
-            if task.status is TaskStatus.NEEDS_USER_DECISION:
-                self.registry.record_snapshot(
-                    task_id,
-                    {
-                        "phase": "needs_user_decision",
-                        "recovery": {"message": reason},
-                        "process_id": task.process_id,
-                        "session_id": task.session_id,
-                        "session_path": task.session_path,
-                    },
-                    has_meaningful_event=True,
-                    event_cursor=task.event_cursor,
-                    no_meaningful_event_limit=self.no_meaningful_event_limit,
-                )
-                return (
-                    self.registry.detach_process(task.task_id)
-                    if clear_process
-                    else task
-                )
-            self.registry.record_snapshot(
-                task_id,
-                {
-                    "phase": "orphaned",
-                    "recovery": {"message": reason},
-                    "process_id": task.process_id,
-                    "session_id": task.session_id,
-                    "session_path": task.session_path,
-                },
-                has_meaningful_event=True,
-                event_cursor=task.event_cursor,
-                no_meaningful_event_limit=self.no_meaningful_event_limit,
-            )
-            task = self.registry.get_task(task_id)
             if task.status is not TaskStatus.ORPHANED:
                 task = self.registry.transition_status(task_id, TaskStatus.ORPHANED)
             return self.registry.detach_process(task.task_id) if clear_process else task
         except (TaskNotFoundError, InvalidTaskTransition):
             return None
+
 
 
 def _process_id(adapter: PiRpcAdapter) -> int | None:
@@ -996,57 +920,3 @@ def _cursor_value(value: str | None) -> int:
         return max(0, int(value or "0"))
     except (TypeError, ValueError):
         return 0
-
-
-def _agent_finished(events: list[Any]) -> bool:
-    return any(event.payload.get("type") == "agent_end" for event in events)
-
-
-def _worker_failed(events: list[Any], snapshot: dict[str, Any]) -> bool:
-    if snapshot.get("state") == "exited" and snapshot.get("returncode") not in {None, 0}:
-        return True
-    for event in events:
-        payload = event.payload
-        if payload.get("type") in {"rpc_error", "error"}:
-            return True
-        if payload.get("type") == "message_end":
-            message = payload.get("message")
-            if isinstance(message, Mapping) and message.get("stopReason") == "error":
-                return True
-    return False
-
-
-def _phase(events: list[Any], snapshot: dict[str, Any]) -> str:
-    if any(event.payload.get("type") == "agent_end" for event in events):
-        return "completed"
-    if snapshot.get("running"):
-        return "working"
-    return str(snapshot.get("state") or "unknown")
-
-
-def _pi_state_changed(
-    previous_snapshot: Mapping[str, Any] | None,
-    current_state: Mapping[str, Any] | None,
-) -> bool:
-    """Detect meaningful Pi state transitions without counting volatile fields."""
-
-    if not current_state:
-        return False
-    previous_state = (
-        previous_snapshot.get("pi_state")
-        if isinstance(previous_snapshot, Mapping)
-        else None
-    )
-    if not isinstance(previous_state, Mapping):
-        # The first state is an observation baseline, not an event. Counting
-        # it as progress would turn a configured three-empty-poll threshold
-        # into four polls for an otherwise silent worker.
-        return False
-    volatile = {"messageCount", "pendingMessageCount"}
-    current_comparable = {
-        key: value for key, value in current_state.items() if key not in volatile
-    }
-    previous_comparable = {
-        key: value for key, value in previous_state.items() if key not in volatile
-    }
-    return current_comparable != previous_comparable

@@ -118,38 +118,17 @@ def _command_display(command: Sequence[str]) -> str:
 
 _MEANINGFUL_TYPES = frozenset(
     {
-        "agent_start",
-        "agent_end",
-        "turn_start",
-        "turn_end",
-        "tool_call",
-        "tool_start",
-        "tool_end",
-        "tool_result",
-        "tool_execution_start",
-        "tool_execution_end",
-        "tool_execution_result",
-        "message_start",
-        "message_end",
-        "assistant_message_start",
-        "assistant_message_end",
-        "extension_ui_request",
-        "artifact",
-        "artifact_created",
-        "session_created",
-        "session_switched",
-        "session_compacted",
-        "compaction_start",
-        "compaction_end",
-        "error",
-        "rpc_error",
-        "process_exit",
+        "agent_start", "agent_end", "turn_start", "turn_end", "tool_call",
+        "tool_start", "tool_end", "tool_result", "tool_execution_start",
+        "tool_execution_end", "tool_execution_result", "message_start",
+        "message_end", "assistant_message_start", "assistant_message_end",
+        "extension_ui_request", "artifact", "artifact_created", "session_created",
+        "session_switched", "session_compacted", "compaction_start", "compaction_end",
+        "error", "rpc_error", "process_exit",
     }
 )
-
 _CHILD_ENVIRONMENT_KEYS = frozenset(
     {
-        "APPDATA",
         "COMSPEC",
         "HOME",
         "HOMEDRIVE",

@@ -26,6 +26,7 @@ class FakeAdapter:
         self.steer_messages: list[str] = []
         self.cancelled = False
         self.state_calls = 0
+        self.session_path = str(Path(kwargs.get("session_dir", "/tmp")) / "session.jsonl")
         self.__class__.instances.append(self)
 
     async def start(self):
@@ -37,7 +38,10 @@ class FakeAdapter:
 
     async def get_state(self):
         self.state_calls += 1
-        return {"sessionId": f"session-{self.task_id}"}
+        return {
+            "sessionId": f"session-{self.task_id}",
+            "sessionPath": self.session_path,
+        }
 
     async def send_prompt_nowait(self, _prompt):
         return "prompt-id"
@@ -98,10 +102,7 @@ async def test_shutdown_finalizes_queued_launch(tmp_path: Path):
 
     task = registry.get_task(task_id)
     assert task.status is TaskStatus.FAILED
-    assert registry.get_latest_snapshot(task_id).payload["phase"] in {
-        "cancelled_before_start",
-        "failed_to_start",
-    }
+    assert registry.get_latest_snapshot(task_id) is None
     registry.close()
 
 
@@ -153,9 +154,7 @@ async def test_poll_records_a_bounded_remote_pi_state_snapshot(tmp_path: Path):
     task_id = created["task_id"]
     await asyncio.sleep(0)
     await scheduler.poll_task(task_id)
-    snapshot = registry.get_latest_snapshot(task_id)
-    assert snapshot is not None
-    assert snapshot.payload["pi_state"] == {"sessionId": f"session-{task_id}"}
+    assert registry.get_latest_snapshot(task_id) is None
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -180,14 +179,13 @@ async def test_main_model_poll_explicitly_checks_worker_without_returning_events
     adapter = FakeAdapter.instances[0]
     calls_after_start = adapter.state_calls
     snapshot_before = registry.get_latest_snapshot(task_id)
-    task_before = registry.get_task(task_id)
 
     result = await service.poll(task_id)
 
     assert result["ok"] is True
     assert adapter.state_calls == calls_after_start + 1
-    assert registry.get_latest_snapshot(task_id) != snapshot_before
-    assert registry.get_task(task_id).no_meaningful_event_count >= task_before.no_meaningful_event_count
+    assert registry.get_latest_snapshot(task_id) == snapshot_before
+    assert registry.get_task(task_id).event_cursor == "0"
     assert result["content"] == []
 
     await service.shutdown()
@@ -231,17 +229,22 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
             }
 
     adapter.drain_events = lambda *, after_cursor=0, **_kwargs: [Event()]
+    session_path = Path(adapter.session_path)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_bytes('{"type":"message","text":"progress"}\n'.encode())
+
     await scheduler.poll_task(task_id)
     observed = registry.get_latest_snapshot(task_id)
-    assert observed is not None
+    assert observed is None
 
     first = await service.poll(task_id)
     second = await service.poll(task_id)
 
     assert first["content"] == []
     assert second["content"] == []
-    assert registry.get_latest_snapshot(task_id).payload == observed.payload
-    assert registry.get_latest_snapshot(task_id).payload["events"][0]["payload"]["assistantMessageEvent"]["delta"] == "progress"
+    assert service.read(task_id, cursor=0, limit=10)["session_lines"] == [
+        '{"type":"message","text":"progress"}\n'
+    ]
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -249,7 +252,7 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 
 
 @pytest.mark.asyncio
-async def test_result_reads_raw_pi_events_by_cursor(tmp_path: Path):
+async def test_result_reads_native_pi_session_lines_by_cursor(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
     scheduler = TaskScheduler(
@@ -262,30 +265,23 @@ async def test_result_reads_raw_pi_events_by_cursor(tmp_path: Path):
     created = await service.create_task(owner_key="qq:1", task="inspect")
     task_id = created["task_id"]
     await asyncio.sleep(0)
-
-    class Event:
-        meaningful = True
-        payload = {
-            "type": "message_update",
-            "assistantMessageEvent": {"type": "text_delta", "delta": "x" * 5000},
-        }
-
-        def as_dict(self):
-            return {"cursor": 1, "meaningful": True, "payload": self.payload}
-
     adapter = FakeAdapter.instances[-1]
-    adapter.event_cursor = 1
-    adapter.drain_events = lambda **_: [Event()]
-    await scheduler.poll_task(task_id)
+    session_path = Path(adapter.session_path)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_line = '{"type":"message_update","delta":"' + ("x" * 5000) + '"}\n'
+    session_path.write_bytes(raw_line.encode())
+
     result = service.result(task_id, offset=0, limit=1)
 
     assert result["content"] == []
-    assert result["events"][0]["payload"]["assistantMessageEvent"]["delta"] == "x" * 5000
+    assert result["session_lines"] == [raw_line]
     assert result["progress"]["read"] == {
         "cursor": 0,
         "next_cursor": 1,
         "returned": 1,
         "has_more": False,
+        "source": "pi_native_session_jsonl",
+        "session_path": str(session_path),
     }
 
     await service.shutdown()
@@ -294,7 +290,7 @@ async def test_result_reads_raw_pi_events_by_cursor(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_message_end_provider_error_transitions_task_to_failed(tmp_path: Path):
+async def test_provider_error_remains_in_native_session(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "provider-error-tasks.db")
     scheduler = TaskScheduler(
@@ -307,29 +303,17 @@ async def test_message_end_provider_error_transitions_task_to_failed(tmp_path: P
     created = await service.create_task(owner_key="qq:1", task="inspect")
     task_id = created["task_id"]
     await asyncio.sleep(0)
-
-    class Event:
-        meaningful = True
-        payload = {
-            "type": "message_end",
-            "message": {
-                "stopReason": "error",
-                "errorMessage": "OpenAI API error (502): upstream unavailable",
-            },
-        }
-
-        def as_dict(self):
-            return {"cursor": 1, "meaningful": True, "payload": self.payload}
-
     adapter = FakeAdapter.instances[-1]
-    adapter.event_cursor = 1
-    adapter.drain_events = lambda **_: [Event()]
-    await scheduler.poll_task(task_id)
+    session_path = Path(adapter.session_path)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_line = '{"type":"message_end","message":{"stopReason":"error","errorMessage":"OpenAI API error (502): upstream unavailable"}}\n'
+    session_path.write_bytes(raw_line.encode())
 
     result = service.result(task_id)
-    assert registry.get_task(task_id).status is TaskStatus.FAILED
-    assert result["content"] == []
-    assert result["events"][0]["payload"]["message"]["errorMessage"] == "OpenAI API error (502): upstream unavailable"
+
+    assert registry.get_task(task_id).status is TaskStatus.RUNNING
+    assert result["error"] is None
+    assert result["session_lines"] == [raw_line]
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -361,8 +345,10 @@ async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Pa
             return {"cursor": 1, "meaningful": True, "payload": self.payload}
 
     adapter = FakeAdapter.instances[-1]
-    adapter.event_cursor = 1
-    adapter.drain_events = lambda **_: [Event()]
+    session_path = Path(adapter.session_path)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_bytes('{"type":"message_update","delta":"once"}\n'.encode())
+
     await scheduler.poll_task(task_id)
 
     status = service.status(task_id)
@@ -376,7 +362,9 @@ async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Pa
     assert "snapshot" not in repeated_status["progress"]
     assert first_poll["content"] == []
     assert repeated_poll["content"] == []
-    assert service.read(task_id, cursor=0, limit=10)["events"][0]["payload"]["assistantMessageEvent"]["delta"] == "once"
+    assert service.read(task_id, cursor=0, limit=10)["session_lines"] == [
+        '{"type":"message_update","delta":"once"}\n'
+    ]
 
     await service.shutdown()
     await scheduler.shutdown()
