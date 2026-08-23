@@ -12,28 +12,11 @@
     "default": false
   },
   "pi_model": {
-    "type": "object",
+    "type": "string",
     "description": "后台 Pi 固定模型",
-    "hint": "所有 pi_agent 后台任务都使用这里配置的 AstrBot Provider 和模型，不继承当前聊天模型，也不再提供单独的模型覆盖项。仅支持 OpenAI 兼容 Provider。",
-    "items": {
-      "provider_id": {
-        "type": "string",
-        "description": "AstrBot Provider ID",
-        "hint": "填写 AstrBot 中已配置的固定 Provider ID。",
-        "_special": "select_provider",
-        "default": ""
-      },
-      "model_id": {
-        "type": "string",
-        "description": "固定模型 ID",
-        "hint": "填写该 Provider 实际支持的模型 ID，例如 gpt-5.6-terra。所有后台 Pi 任务都会使用此模型。",
-        "default": ""
-      }
-    },
-    "default": {
-      "provider_id": "",
-      "model_id": ""
-    }
+    "hint": "直接选择 AstrBot 中已经配置好的具体 Provider/模型。所有 pi_agent 后台任务都固定使用此模型，不继承当前聊天模型。",
+    "_special": "select_provider",
+    "default": ""
   },
   "pi_session_dir": {
     "type": "string",

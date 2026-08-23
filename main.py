@@ -198,10 +198,9 @@ class PiConnectorPlugin(Star):
             if not isinstance(descriptor, dict):
                 raise PiProviderError("Pi task provider descriptor is invalid")
             source_id = str(descriptor.get("source_provider_id") or "").strip()
-            model_id = str(descriptor.get("model_id") or "").strip()
-            if not source_id or not model_id:
+            if not source_id:
                 raise PiProviderError(
-                    "The fixed pi_model configuration must include provider_id and model_id"
+                    "The fixed pi_model configuration must select an AstrBot provider/model"
                 )
             getter = getattr(self.astrbot_adapter.context, "get_provider_by_id", None)
             if not callable(getter):
@@ -216,7 +215,6 @@ class PiConnectorPlugin(Star):
                 provider_id=source_id,
                 provider=provider,
                 agent_dir=agent_dir,
-                model_override=model_id,
             )
             return PiWorkerConfig(
                 provider=binding.pi_provider_id,
@@ -876,18 +874,12 @@ class PiConnectorPlugin(Star):
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied)
         try:
-            model_config = self._config_value("pi_model", {})
-            if not isinstance(model_config, dict):
+            model_config = self._config_value("pi_model", "")
+            provider_id = str(model_config or "").strip()
+            if not provider_id:
                 return self._bridge_error(
                     operation,
-                    "请先在 pi_model 中配置固定的 provider_id 和 model_id",
-                )
-            provider_id = str(model_config.get("provider_id") or "").strip()
-            model_id = str(model_config.get("model_id") or "").strip()
-            if not provider_id or not model_id:
-                return self._bridge_error(
-                    operation,
-                    "请先在 pi_model 中配置固定的 provider_id 和 model_id",
+                    "请先在 pi_model 中选择 AstrBot 已配置的具体模型",
                 )
             service = await self._task_service_or_error()
             context = capture_task_context(event)
@@ -900,7 +892,6 @@ class PiConnectorPlugin(Star):
                 )
             descriptor = {
                 "source_provider_id": provider_id,
-                "model_id": model_id,
             }
 
             # Capture the full context only after ``PiTaskService`` has chosen

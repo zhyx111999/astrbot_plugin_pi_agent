@@ -69,7 +69,7 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | --- | ---: | --- |
 | `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
 | `task_require_admin` | `false` | 为 `true` 时仅 AstrBot 管理员可使用异步任务工具；否则按任务 owner 隔离。 |
-| `pi_model` | `{}` | 后台 Pi 的唯一固定模型配置，包含 `provider_id` 和 `model_id`。所有后台 Pi 任务都使用这里的 Provider 和模型，不继承当前聊天模型。仅支持 OpenAI-compatible Provider。 |
+| `pi_model` | `""` | 直接选择 AstrBot 中已经配置好的具体 Provider/模型。所有后台 Pi 任务固定使用这个模型，不继承当前聊天模型。仅支持 OpenAI-compatible Provider。 |
 | `state_directory` | `""` | 状态根目录；为空使用插件 `.pi`。 |
 | `task_database` | `""` | SQLite 路径；为空使用 `state_directory/tasks.db`。 |
 | `workspace_root` | `""` | 任务工作区根目录；为空使用 `state_directory/workspaces`。 |

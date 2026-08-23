@@ -49,7 +49,7 @@ Every async tool returns a JSON envelope with `schema_version`, `ok`, `operation
 ## Context, provider, Skill, and MCP
 
 - At creation time Pi receives the configured AstrBot persona (when enabled) plus a one-time snapshot of the current event's public fields and source message. Later messages are not synchronized automatically; use `pi_task_follow_up`.
-- All background Pi tasks use the single fixed `pi_model` configuration, which contains `provider_id` and `model_id`. The worker never follows the provider or model selected for the current chat. The adapter accepts OpenAI-compatible providers only. API keys are kept in the worker environment and must not be copied into prompts, task metadata, snapshots, or replies.
+- All background Pi tasks use the single fixed `pi_model` selection, which points to an already-configured AstrBot Provider/model instance. The worker never follows the provider or model selected for the current chat. The adapter accepts OpenAI-compatible providers only. API keys are kept in the worker environment and must not be copied into prompts, task metadata, snapshots, or replies.
 - Pi official code and RPC remain unchanged. Each configured Skill directory is passed to the worker through a repeated public CLI argument (`--skill <path>`). This proves only that the path was supplied, not that Pi loaded the Skill; rely on the task snapshot/result for runtime evidence.
 - Pi `0.84.2` RPC has no native MCP bridge. AstrBot MCP servers are never inherited automatically. At present, any non-empty `pi_mcp_config_paths` setting makes `pi_agent` return a structured unsupported-capability envelope and the paths are not passed to Pi. Do not expose a raw exception or claim that MCP is available.
 

@@ -103,7 +103,7 @@ async def test_invalid_skill_path_does_not_block_plugin_service_creation(plugin,
 async def test_pi_agent_can_disable_persona_inheritance(plugin):
     plugin.plugin_config = {
         "inherit_persona": False,
-        "pi_model": {"provider_id": "fixed-provider", "model_id": "fixed-model"},
+        "pi_model": "fixed-provider/fixed-model",
     }
     service = MagicMock()
     service.create_task = AsyncMock(return_value={"ok": True, "status": "queued"})
@@ -121,12 +121,7 @@ async def test_pi_agent_uses_only_fixed_provider_and_model_descriptor(plugin):
         async def get_current_chat_provider_id(self, _umo):
             raise AssertionError("pi_agent must not inherit the current chat provider")
 
-    plugin.plugin_config = {
-        "pi_model": {
-            "provider_id": "gateway/provider",
-            "model_id": "delegated-model",
-        }
-    }
+    plugin.plugin_config = {"pi_model": "gateway/provider-model"}
     plugin.astrbot_adapter.context = Context()
     service = MagicMock()
     service.create_task = AsyncMock(return_value={"ok": True, "status": "queued"})
@@ -137,8 +132,7 @@ async def test_pi_agent_uses_only_fixed_provider_and_model_descriptor(plugin):
     assert result == {"ok": True, "status": "queued"}
     task_context = service.create_task.await_args.kwargs["context"]
     assert task_context[WORKER_DESCRIPTOR_KEY] == {
-        "source_provider_id": "gateway/provider",
-        "model_id": "delegated-model",
+        "source_provider_id": "gateway/provider-model",
     }
     assert "api_key" not in json.dumps(task_context).lower()
 
@@ -146,7 +140,7 @@ async def test_pi_agent_uses_only_fixed_provider_and_model_descriptor(plugin):
 @pytest.mark.asyncio
 async def test_pi_agent_rejects_mcp_config_with_structured_envelope(plugin):
     plugin.plugin_config = {
-        "pi_model": {"provider_id": "fixed-provider", "model_id": "fixed-model"},
+        "pi_model": "fixed-provider/fixed-model",
         "pi_mcp_config_paths": ["/configured/mcp.json"],
     }
     service = MagicMock()
