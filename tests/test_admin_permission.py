@@ -80,7 +80,7 @@ class TestLlmTools:
         plugin._get_connection = AsyncMock(return_value=fake_conn)
         result = await plugin.pi_send_message(admin_event, message="hello")
         plugin._get_connection.assert_awaited_once()
-        assert result == "No response from pi."
+        assert "Pi completed without a response" in result
 
 
 class TestCommandHandlers:

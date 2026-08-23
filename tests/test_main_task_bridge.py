@@ -100,6 +100,26 @@ async def test_invalid_skill_path_does_not_block_plugin_service_creation(plugin,
 
 
 @pytest.mark.asyncio
+async def test_legacy_pi_error_event_is_returned_to_astrbot(plugin):
+    async def events():
+        yield {
+            "type": "event",
+            "event": {
+                "type": "message_end",
+                "message": {
+                    "stopReason": "error",
+                    "errorMessage": "OpenAI API error (502): upstream failed",
+                },
+            },
+        }
+        yield {"type": "event", "event": {"type": "agent_end", "messages": []}}
+
+    result = await plugin._collect_events(events())
+    assert "[Pi error] OpenAI API error (502): upstream failed" in result
+    assert "No response from pi" not in result
+
+
+@pytest.mark.asyncio
 async def test_task_access_is_owner_scoped_by_default(plugin, tmp_path):
     registry = TaskRegistry(tmp_path / "tasks.db")
     owned = registry.create_task(owner_key="qq:owner", prompt="owned")

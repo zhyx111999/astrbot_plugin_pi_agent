@@ -79,6 +79,17 @@ USAGE = """Pi Connector 命令帮助
 """
 
 
+def _message_error(message: Any) -> str | None:
+    """Extract a Pi provider/agent error from a message_end payload."""
+
+    if not isinstance(message, dict):
+        return None
+    if message.get("stopReason") != "error" and not message.get("errorMessage"):
+        return None
+    value = message.get("errorMessage") or "Pi agent turn failed"
+    return safe_error_summary(str(value))
+
+
 class PiConnectorPlugin(Star):
     """Connect AstrBot to a local pi agent for session management, chat, and code tasks."""
 
@@ -484,7 +495,17 @@ class PiConnectorPlugin(Star):
                     return "".join(parts)
             elif ev_type == "event":
                 raw = ev.get("event", {})
-                if raw.get("type") == "tool_execution_start":
+                if raw.get("type") == "message_end":
+                    message = raw.get("message")
+                    error = _message_error(message)
+                    if error:
+                        parts.append(f"[Pi error] {error}\n")
+                elif raw.get("type") == "agent_end":
+                    for message in raw.get("messages", []):
+                        error = _message_error(message)
+                        if error:
+                            parts.append(f"[Pi error] {error}\n")
+                elif raw.get("type") == "tool_execution_start":
                     parts.append(
                         f"\n[Tool: {raw.get('toolName')}({raw.get('args', {})})]\n"
                     )
@@ -501,7 +522,12 @@ class PiConnectorPlugin(Star):
     async def _collect_prompt_response(self, conn: PiConnection, prompt: str) -> str:
         """Send a prompt and collect all text events until agent_end."""
         generator = conn.send_prompt(prompt)
-        return await self._collect_events(generator)
+        result = await self._collect_events(generator)
+        if not result.strip():
+            raise PiError(
+                "Pi completed without a response; no file operation was confirmed"
+            )
+        return result
 
     # ------------------------------------------------------------------
     # /pi command handlers
