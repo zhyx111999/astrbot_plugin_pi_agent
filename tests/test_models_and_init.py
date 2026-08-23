@@ -1,17 +1,17 @@
-"""Tests for pi_connector models and package exports."""
+"""Tests for pi_legacy models and package exports."""
 
-# Shared test setup: must run before any pi_connector import.
+# Shared test setup: must run before any pi_legacy import.
 # isort: off
 import _helpers  # noqa: F401
-from pi_connector import (  # noqa: E402
+from pi_legacy import (  # noqa: E402
     PiConnection,
     PiConnectionManager,
     SessionInfo,
     UIRequest,
     __all__,
 )
-from pi_connector.models import SessionInfo as ModelsSessionInfo  # noqa: E402
-from pi_connector.models import UIRequest as ModelsUIRequest  # noqa: E402
+from pi_legacy.models import SessionInfo as ModelsSessionInfo  # noqa: E402
+from pi_legacy.models import UIRequest as ModelsUIRequest  # noqa: E402
 # isort: on
 
 
@@ -137,7 +137,7 @@ class TestUIRequest:
 
 
 class TestPackageExports:
-    """Tests for pi_connector.__init__ exports."""
+    """Tests for pi_legacy.__init__ exports."""
 
     def test_all_exports(self):
         assert set(__all__) == {

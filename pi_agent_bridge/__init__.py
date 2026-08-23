@@ -1,8 +1,8 @@
-"""Independent Pi RPC bridge used by the task-oriented plugin runtime.
+"""Independent Pi Agent runtime adapters used by the task-oriented plugin.
 
-The legacy :mod:`pi_connector` package remains untouched.  This package is a
-small adapter around Pi's public ``--mode rpc`` JSONL interface and deliberately
-does not own task scheduling or AstrBot message delivery.
+The ``pi_legacy`` package preserves the administrator-only interactive
+compatibility route. This package adapts Pi's public ``--mode rpc`` JSONL
+interface without modifying Pi or delivering messages into AstrBot chats.
 """
 
 from .rpc import (

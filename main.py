@@ -4,12 +4,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Ensure the sibling `pi_connector` package is importable when AstrBot loads
+# Ensure the sibling `pi_legacy` package is importable when AstrBot loads
 # this file directly as a standalone module.
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pi_connector import PiConnection, PiConnectionManager, PiError
-from pi_connector.commands import (
+from pi_legacy import PiConnection, PiConnectionManager, PiError
+from pi_legacy.commands import (
     extract_active_branch,
     format_commands_list,
     format_session_info,
@@ -47,7 +47,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import PermissionType
 from astrbot.api.star import Context, Star
 
-USAGE = """Pi Connector 命令帮助
+USAGE = """Pi Agent 命令帮助
 
 会话管理：
   /pi open <绝对路径>       - 在指定目录打开新的 pi session
@@ -90,7 +90,7 @@ def _message_error(message: Any) -> str | None:
     return safe_error_summary(str(value))
 
 
-class PiConnectorPlugin(Star):
+class PiAgentPlugin(Star):
     """Connect AstrBot to a local pi agent for session management, chat, and code tasks."""
 
     def __init__(self, context: Context, config=None):
@@ -118,13 +118,13 @@ class PiConnectorPlugin(Star):
         self._task_registry: TaskRegistry | None = None
         self._task_service_lock = None
         self._legacy_output_pages: dict[str, tuple[str, int]] = {}
-        logger.info("PiConnector initialized")
+        logger.info("PiAgent initialized")
 
     async def initialize(self):
         """Async initialization hook called after the Star is instantiated."""
         if self._config_bool("enable_async_tasks", True):
             await self._ensure_task_service()
-        logger.info("PiConnector plugin initialized.")
+        logger.info("PiAgent plugin initialized.")
 
     async def terminate(self):
         """Terminate all managed pi connections when the plugin is unloaded."""
@@ -303,7 +303,7 @@ class PiConnectorPlugin(Star):
     def _require_admin(self, event: AstrMessageEvent) -> str | None:
         """Return a permission-denied message if the sender is not an AstrBot admin."""
         if not event.is_admin():
-            return "Permission denied. Pi Connector is only available to AstrBot administrators."
+            return "Permission denied. Pi Agent is only available to AstrBot administrators."
         return None
 
     def _require_task_permission(self, event: AstrMessageEvent) -> str | None:

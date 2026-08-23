@@ -1,15 +1,15 @@
-"""Tests for pi_connector/manager.py."""
+"""Tests for pi_legacy/manager.py."""
 
 import json
 import os
 import time
 import types
 
-# Shared test setup: must run before any pi_connector import.
+# Shared test setup: must run before any pi_legacy import.
 # isort: off
 import _helpers  # noqa: F401
-from pi_connector.connection import PiError  # noqa: E402
-from pi_connector.manager import PiConnectionManager  # noqa: E402
+from pi_legacy.connection import PiError  # noqa: E402
+from pi_legacy.manager import PiConnectionManager  # noqa: E402
 # isort: on
 
 import pytest

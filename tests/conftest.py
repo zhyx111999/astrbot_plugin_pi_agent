@@ -1,4 +1,4 @@
-"""Shared pytest fixtures and mocks for the pi_connector test suite.
+"""Shared pytest fixtures and mocks for the pi_legacy test suite.
 
 This module sets up fake AstrBot public API modules so that `main.py` can be
 imported in tests without the full AstrBot runtime.
@@ -11,12 +11,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Shared test setup: must run before any pi_connector import.
+# Shared test setup: must run before any pi_legacy import.
 # isort: off
 import _helpers  # noqa: F401
 # isort: on
 
-# Ensure the project root is on sys.path so pi_connector can be imported.
+# Ensure the project root is on sys.path so pi_legacy can be imported.
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -125,8 +125,8 @@ import main  # noqa: E402
 
 @pytest.fixture
 def plugin():
-    """Return a PiConnectorPlugin instance with a mocked connection manager."""
-    instance = main.PiConnectorPlugin(context=FakeContext())
+    """Return a PiAgentPlugin instance with a mocked connection manager."""
+    instance = main.PiAgentPlugin(context=FakeContext())
     instance.pi_connection_manager = MagicMock()
     yield instance
 

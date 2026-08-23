@@ -164,8 +164,8 @@ AstrBot 重启时会尝试重新接管仍存活的 worker。标准 stdin/stdout 
 
 ```bash
 python -m pytest -q
-ruff check main.py pi_agent_bridge pi_connector tests
-python -m compileall -q main.py pi_agent_bridge pi_connector
+ruff check main.py pi_agent_bridge pi_legacy tests
+python -m compileall -q main.py pi_agent_bridge pi_legacy
 git diff --check
 ```
 

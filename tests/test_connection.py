@@ -1,12 +1,12 @@
-"""Tests for pi_connector/connection.py (mocked sync/async parts)."""
+"""Tests for pi_legacy/connection.py (mocked sync/async parts)."""
 
 import asyncio
 
-# Shared test setup: must run before any pi_connector import.
+# Shared test setup: must run before any pi_legacy import.
 # isort: off
 import _helpers  # noqa: F401
-from pi_connector.connection import PiConnection  # noqa: E402
-from pi_connector.models import UIRequest  # noqa: E402
+from pi_legacy.connection import PiConnection  # noqa: E402
+from pi_legacy.models import UIRequest  # noqa: E402
 # isort: on
 
 import pytest

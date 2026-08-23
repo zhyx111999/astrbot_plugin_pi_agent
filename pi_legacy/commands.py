@@ -1,4 +1,4 @@
-"""Formatting and parsing helpers for the pi connector plugin commands."""
+"""Formatting and parsing helpers for the Pi legacy compatibility route."""
 
 from .models import SessionInfo, UIRequest
 

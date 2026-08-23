@@ -1,9 +1,9 @@
 ---
-name: pi-connector
+name: pi-agent
 description: Use Pi as AstrBot's general-purpose Agent executor for code, scripts, research, automation, and long-running multi-step work in an isolated Pi worker while AstrBot remains available for the main conversation.
 ---
 
-# Pi Agent Bridge
+# Pi Agent
 
 ## Core Role
 

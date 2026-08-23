@@ -1,6 +1,6 @@
-"""Shared test setup for pi_connector unit tests.
+"""Shared test setup for pi_legacy unit tests.
 
-Import this module at the top of any test file before importing pi_connector
+Import this module at the top of any test file before importing pi_legacy
 packages. It ensures the project root is on sys.path and mocks the AstrBot
 public API so tests can run without the full AstrBot runtime.
 """
@@ -9,12 +9,12 @@ import sys
 import types
 from pathlib import Path
 
-# Ensure the project root is on sys.path so pi_connector can be imported.
+# Ensure the project root is on sys.path so pi_legacy can be imported.
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# Mock AstrBot public API so pi_connector modules can be imported standalone.
+# Mock AstrBot public API so pi_legacy modules can be imported standalone.
 _NOOP_LOGGER = types.SimpleNamespace(
     info=lambda *args, **kwargs: None,
     debug=lambda *args, **kwargs: None,

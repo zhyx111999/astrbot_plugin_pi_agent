@@ -1,4 +1,4 @@
-"""Tests for admin permission checks in PiConnectorPlugin.
+"""Tests for admin permission checks in PiAgentPlugin.
 
 These tests verify that the /pi and /pic command handlers are decorated with
 AstrBot's ADMIN permission filter, that the _require_admin helper behaves
@@ -6,7 +6,7 @@ correctly, and that every llm_tool method short-circuits with a permission
 denial message when invoked by a non-admin user.
 """
 
-# Shared test setup: must run before any pi_connector import.
+# Shared test setup: must run before any pi_legacy import.
 # isort: off
 import _helpers  # noqa: F401
 # isort: on
@@ -88,12 +88,12 @@ class TestCommandHandlers:
 
     def test_pi_handler_requires_admin(self):
         assert (
-            main.PiConnectorPlugin.pi_handler.__permission_type__
+            main.PiAgentPlugin.pi_handler.__permission_type__
             == FakePermissionType.ADMIN
         )
 
     def test_pic_handler_requires_admin(self):
         assert (
-            main.PiConnectorPlugin.pic_handler.__permission_type__
+            main.PiAgentPlugin.pic_handler.__permission_type__
             == FakePermissionType.ADMIN
         )

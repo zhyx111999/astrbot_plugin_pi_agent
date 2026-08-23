@@ -1,9 +1,9 @@
-"""Tests for pi_connector/commands.py."""
+"""Tests for pi_legacy/commands.py."""
 
-# Shared test setup: must run before any pi_connector import.
+# Shared test setup: must run before any pi_legacy import.
 # isort: off
 import _helpers  # noqa: F401
-from pi_connector.commands import (  # noqa: E402
+from pi_legacy.commands import (  # noqa: E402
     _extract_user_text,
     _filter_user_entries,
     extract_active_branch,
@@ -18,7 +18,7 @@ from pi_connector.commands import (  # noqa: E402
     resolve_tree_entry_id,
     strip_command_prefix,
 )
-from pi_connector.models import SessionInfo, UIRequest  # noqa: E402
+from pi_legacy.models import SessionInfo, UIRequest  # noqa: E402
 from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 # isort: on
 

@@ -1,11 +1,9 @@
-# Agent Notes for astrbot_plugin_piconnector
+# Agent Notes for astrbot_plugin_pi_agent
 
-This is an [AstrBot](https://github.com/AstrBotDevs/AstrBot) plugin. It is **not** a standalone application; AstrBot loads it at runtime.
+This is an [AstrBot](https://github.com/AstrBotDevs/AstrBot) plugin providing a general-purpose Pi Agent executor with isolated async tasks and an administrator-only interactive compatibility route. It is not a standalone application; AstrBot loads it at runtime.
 
-## Plugin identity
-
-- `metadata.yaml` is the source of truth for plugin metadata. `name` must start with `astrbot_plugin_`.
-- The values in `metadata.yaml` and `README.md` are currently the hello-world template defaults. Update them when modifying the plugin.
+- The repository is maintained as an independent AstrBot plugin. Pi and AstrBot official source code must not be modified.
+- The release metadata and README describe the current Pi Agent runtime and task model; keep them synchronized with implementation changes.
 - `main.py` is the entrypoint. The class registered with `@register("...", author, desc, version)` is what AstrBot instantiates.
 
 ## Architecture
@@ -30,12 +28,12 @@ This is an [AstrBot](https://github.com/AstrBotDevs/AstrBot) plugin. It is **not
 - Use `pytest.raises(...)` instead of `with self.assertRaises(...)`.
 - Prefer `pytest.mark.parametrize` or inline `self.subTest`-like loops for similar cases.
 - Use `unittest.mock.MagicMock` for synchronous mocks and `unittest.mock.AsyncMock` for async methods/dependencies.
-- Every test file must import the shared setup before importing `pi_connector` or `main`:
+- Every test file must import the shared setup before importing `pi_legacy` or `main`:
 
   ```python
   # isort: off
   import _helpers  # noqa: F401
-  from pi_connector import ...  # noqa: E402
+  from pi_legacy import ...  # noqa: E402
   # isort: on
   ```
 

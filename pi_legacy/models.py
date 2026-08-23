@@ -1,4 +1,4 @@
-"""Data models for the pi connector plugin."""
+"""Data models for the Pi legacy compatibility route."""
 
 from dataclasses import dataclass, field
 

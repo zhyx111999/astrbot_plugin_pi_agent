@@ -1,6 +1,6 @@
-"""Pi connector package for AstrBot.
+"""Pi legacy compatibility package for AstrBot interactive sessions.
 
-Provides a local pi agent integration for AstrBot chat contexts.
+Provides a local Pi integration for administrator-only interactive sessions.
 """
 
 from .connection import PiConnection, PiError
