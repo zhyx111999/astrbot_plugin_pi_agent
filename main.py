@@ -951,9 +951,14 @@ class PiAgentPlugin(Star):
         long-running or multi-step work in an isolated worker. Use it for
         sustained research, coding, testing, multi-agent work, or tasks that
         should run in the background while AstrBot continues handling the main
-        conversation. This call returns a task_id immediately; AstrBot uses
-        the task tools afterward to inspect and manage the task. Simple
-        questions and short tool calls belong to AstrBot.
+        conversation. This call returns a task_id immediately.
+
+        IMPORTANT: After this tool returns, end the current AstrBot tool loop
+        and answer the user. Do not call pi_task_poll, pi_task_status, or
+        pi_task_read in the same turn. Check the task only in a later model
+        turn when the user asks or when a new user message requires it.
+
+        Simple questions and short tool calls belong to AstrBot.
 
         Args:
             prompt(string): Complete task instruction for the delegated worker
@@ -1025,6 +1030,10 @@ class PiAgentPlugin(Star):
     async def pi_task_status(self, event: AstrMessageEvent, task_id: str) -> str:
         """Read AstrBot task and native-session metadata without session content.
 
+        This is read-only. After this tool returns, end the current tool loop.
+        Do not call another Pi task tool in the same turn unless the user
+        explicitly requested a specific follow-up operation.
+
         Args:
             task_id(string): Task id returned by pi_agent
         """
@@ -1041,8 +1050,9 @@ class PiAgentPlugin(Star):
     async def pi_task_list(self, event: AstrMessageEvent) -> str:
         """List every registered Pi task for AstrBot to select and manage.
 
-        The list includes tasks owned by other users. Listing is read-only;
-        owner or administrator permission is checked separately for writes.
+        This is a directory lookup only. After this tool returns, end the
+        current tool loop and select a task in a later turn if needed. Do not
+        chain list -> poll -> read in one turn.
         """
         operation = "task_list"
         if denied := self._require_task_permission(event):
@@ -1062,6 +1072,9 @@ class PiAgentPlugin(Star):
         AstrBot receives the session data directly and decides how to parse it.
         This read-only operation does not summarize, classify, or rewrite the
         session and never injects the current caller's context.
+
+        After this tool returns, end the current AstrBot tool loop. Do not
+        immediately call poll, status, result, or read again in the same turn.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1086,6 +1099,9 @@ class PiAgentPlugin(Star):
         This is not a summarized final-answer endpoint. AstrBot reads and
         interprets the selected Pi session itself.
 
+        After this tool returns, end the current AstrBot tool loop. Do not
+        chain another Pi inspection call in the same turn.
+
         Args:
             task_id(string): Task id returned by pi_agent
             offset(number): Zero-based session line cursor to continue from
@@ -1106,6 +1122,10 @@ class PiAgentPlugin(Star):
 
         AstrBot explicitly triggers this read-only check. It does not inject
         the current caller's context into the existing Pi session.
+
+        Perform at most one poll in the current turn. After it returns, end
+        the current AstrBot tool loop and wait for a later turn before polling
+        again, even when the status is still running.
 
         Args:
             task_id(string): Task id returned by pi_agent

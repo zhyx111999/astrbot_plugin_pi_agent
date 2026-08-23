@@ -149,7 +149,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 - 需要并行的独立子任务；
 - 用户明确要求后台持续执行。
 
-调用后不要在同一次回合等待 Pi 完成。后续由 AstrBot 根据用户需求调用 `pi_task_list` 找到目标 task，再调用 `pi_task_status` 或 `pi_task_poll` 检查控制状态；需要查看内容时，调用 `pi_task_read` 直接读取对应 native session JSONL，并由 AstrBot 自己翻阅和判断。插件不把 Pi 原始内容复制到 SQLite snapshot，也不生成摘要、进度或错误解释。普通用户可读取其他用户任务，但只有 owner 或管理员可以改变任务。
+调用 `pi_agent` 后必须立即结束当前 AstrBot tool loop，不要在同一回合调用 `pi_task_poll`、`pi_task_status` 或 `pi_task_read`。后续用户回合需要查询时，最多调用一次 list/status/poll/read，工具返回后再次结束当前回合；不要因为状态是 `running` 就在同一回合重复轮询。legacy `pi_open_session` 和 `pi_send_message` 是可能等待 Pi 回复的同步兼容线路，只有用户明确要求 `/pi` 或已有交互 session 时才使用，后台任务必须使用 `pi_agent`。
 
 ### 旧会话工具与命令
 

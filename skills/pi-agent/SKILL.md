@@ -22,15 +22,15 @@ At creation time, the new task receives a one-time snapshot of the current AstrB
 ## AstrBot-Controlled Workflow
 
 1. Call `pi_agent` and record the returned `task_id`.
-2. Continue the current AstrBot conversation; do not wait for Pi in the same turn.
-3. When the user asks about Pi work, call `pi_task_list` to find the relevant task. The directory contains all registered tasks, including tasks owned by other users.
+2. Continue the current AstrBot conversation; after `pi_agent` returns, end the current tool loop immediately. Do not poll or read the task in the same turn.
+3. When a later user turn requires Pi information, call `pi_task_list` or the known task tool. After each list/status/poll/read call, end the current tool loop; never chain polling calls in one turn.
 4. Call `pi_task_status` for control metadata without Pi content.
 5. Call `pi_task_poll` when AstrBot explicitly needs one short Pi state observation. It returns control metadata only and does not return Pi events.
 6. When the user asks to inspect the work, call `pi_task_read(task_id, cursor?, limit?)` to read raw lines from the task's native Pi session JSONL file. The plugin does not parse, summarize, classify, or rewrite these lines; AstrBot reads the complete session itself. Use the returned line cursor to continue.
 7. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
 8. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
-Do not repeatedly poll without a reason. Do not infer a failure or a need for user input merely because one observation has no text. The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events.
+The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again.
 
 ## Async Task Tools
 
@@ -77,4 +77,4 @@ Pi's JSONL events are consumed internally only for transport acknowledgements an
 
 ## Legacy Synchronous Route
 
-The compatibility tools remain separate from the silent async worker route: `pi_open_session`, `pi_list_sessions`, `pi_resume_session`, `pi_send_message`, `pi_get_session_info`, `pi_run_command`, `pi_abort`, and `pi_reply_ui`. They provide direct administrator-only interactive Pi sessions and should not be used for normal background task delegation.
+The legacy tools are synchronous and may wait for a Pi response. Use them only when the user explicitly asks for `/pi` or an existing interactive legacy session. Never use `pi_open_session` or `pi_send_message` for normal background delegation.
