@@ -4,10 +4,12 @@ import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from astrbot.api import logger
+
+from pi_agent_bridge.runtime import PiRuntimeAdapter, PiRuntimeError
 
 from .models import UIRequest
 
@@ -30,7 +32,7 @@ class PiConnection:
         session_dir: str | None = None,
         cwd: str | None = None,
         name: str | None = None,
-        executable: str = "pi",
+        executable: str | Sequence[str] = "pi",
     ):
         self.session_path = session_path
         self.session_dir = session_dir
@@ -59,13 +61,23 @@ class PiConnection:
         self._ui_request_counter += 1
         return self._ui_request_counter
 
+    def _resolve_executable(self) -> tuple[str, ...]:
+        if self.executable == "pi":
+            try:
+                return PiRuntimeAdapter().resolve_command()
+            except PiRuntimeError as exc:
+                raise PiError(str(exc)) from exc
+        if isinstance(self.executable, str):
+            return (self.executable,)
+        return tuple(str(part) for part in self.executable)
+
     async def start(self) -> None:
         """Spawn the pi --mode rpc subprocess and start reader loops."""
         if self.process is not None:
             logger.warning("PiConnection already started")
             return
 
-        args = [self.executable, "--mode", "rpc"]
+        args = list(self._resolve_executable()) + ["--mode", "rpc"]
         if self.session_dir:
             args.extend(["--session-dir", self.session_dir])
         if self.session_path:

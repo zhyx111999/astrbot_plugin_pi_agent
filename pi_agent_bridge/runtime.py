@@ -257,7 +257,26 @@ class PiRuntimeAdapter:
             value = self._call_which(candidate, path)
             if value:
                 return self.normalize_path(value)
+        for candidate in self._user_install_candidates():
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
         return None
+
+    def _user_install_candidates(self) -> tuple[Path, ...]:
+        """Find user-level Node installs when a service omits shell PATH setup."""
+
+        if self.is_windows:
+            return ()
+        home = Path(self.environment.get("HOME") or Path.home())
+        candidates = [home / ".local" / "bin" / "pi"]
+        nvm_root = home / ".nvm" / "versions" / "node"
+        if nvm_root.is_dir():
+            candidates.extend(
+                version / "bin" / "pi"
+                for version in sorted(nvm_root.iterdir(), reverse=True)
+                if version.is_dir()
+            )
+        return tuple(candidates)
 
     def _call_which(self, candidate: str, path: str | None) -> str | None:
         try:
