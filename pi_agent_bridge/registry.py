@@ -176,13 +176,9 @@ class TaskRegistry:
         }
         if "session_path" not in columns:
             self._connection.execute("ALTER TABLE tasks ADD COLUMN session_path TEXT")
-        # Older bridge versions kept one row per distinct fingerprint. Keep
-        # only the newest observation per task when opening such a database so
-        # long-running workers cannot retain an unbounded snapshot history.
-        self._connection.execute(
-            "DELETE FROM snapshots WHERE snapshot_id NOT IN "
-            "(SELECT MAX(snapshot_id) FROM snapshots GROUP BY task_id)"
-        )
+        # Existing databases may have been compacted by earlier bridge versions.
+        # New observations are retained until task retention removes the task so
+        # AstrBot can read a Pi session by event cursor without reconstruction.
         self._connection.execute(
             "UPDATE tasks SET latest_snapshot_id = "
             "(SELECT MAX(snapshot_id) FROM snapshots WHERE snapshots.task_id = tasks.task_id) "
@@ -321,15 +317,16 @@ class TaskRegistry:
             return self.get_task(task_id)
 
     def record_snapshot(self, task_id: str, payload: Mapping[str, Any], *, has_meaningful_event: bool, event_cursor: str | None = None, no_meaningful_event_limit: int = 3) -> tuple[TaskRecord, SnapshotRecord | None, bool]:
-        """Persist the newest snapshot and atomically update observation state.
+        """Persist a raw Pi observation and atomically advance its cursor.
 
-        Returns ``(task, snapshot, inserted)``. ``inserted`` is false for a
-        repeated payload, while repeated/heartbeat polls still count toward
-        ``no_meaningful_event_limit``.
+        ``has_meaningful_event`` and ``no_meaningful_event_limit`` remain in
+        the storage API for database compatibility. They never infer a task
+        state: only Pi lifecycle events and explicit control operations may
+        change a task's status.
         """
         if no_meaningful_event_limit < 1:
             raise ValueError("no_meaningful_event_limit must be positive")
-        fingerprint = _fingerprint(payload)
+        fingerprint = _fingerprint({"payload": payload, "event_cursor": event_cursor}) if event_cursor is not None else _fingerprint(payload)
         with self._lock, self._write_transaction():
             current = self.get_task(task_id)
             now = _utc_now()
@@ -346,8 +343,8 @@ class TaskRegistry:
                 snapshot_id = int(cursor.lastrowid)
                 snapshot = SnapshotRecord(snapshot_id, task_id, event_cursor, dict(payload), has_meaningful_event, fingerprint, now)
                 self._connection.execute(
-                    "DELETE FROM snapshots WHERE task_id=? AND snapshot_id<>?",
-                    (task_id, snapshot_id),
+                    "UPDATE tasks SET latest_snapshot_id=?, latest_snapshot_fingerprint=? WHERE task_id=?",
+                    (snapshot_id, fingerprint, task_id),
                 )
             else:
                 snapshot_id = int(row["snapshot_id"])
@@ -359,10 +356,9 @@ class TaskRegistry:
                     row = self._connection.execute("SELECT * FROM snapshots WHERE snapshot_id=?", (snapshot_id,)).fetchone()
                 snapshot = SnapshotRecord(snapshot_id, task_id, row["event_cursor"], _decode(row["payload_json"]), bool(row["has_meaningful_event"]), row["fingerprint"], row["created_at"])
             count = 0 if has_meaningful_event else current.no_meaningful_event_count + 1
-            next_status = TaskStatus.NEEDS_USER_DECISION if (not has_meaningful_event and count >= no_meaningful_event_limit and current.status == TaskStatus.RUNNING) else current.status
             self._connection.execute(
-                "UPDATE tasks SET event_cursor=COALESCE(?,event_cursor), no_meaningful_event_count=?, status=?, latest_snapshot_id=?, latest_snapshot_fingerprint=?, updated_at=? WHERE task_id=?",
-                (event_cursor, count, next_status.value, snapshot_id, fingerprint, now, task_id),
+                "UPDATE tasks SET event_cursor=COALESCE(?,event_cursor), no_meaningful_event_count=?, latest_snapshot_id=?, latest_snapshot_fingerprint=?, updated_at=? WHERE task_id=?",
+                (event_cursor, count, snapshot_id, fingerprint, now, task_id),
             )
             return self.get_task(task_id), snapshot, inserted
 
@@ -377,7 +373,33 @@ class TaskRegistry:
             ).fetchone()
             if row is None:
                 return None
-            return SnapshotRecord(row["snapshot_id"], task_id, row["event_cursor"], _decode(row["payload_json"]), bool(row["has_meaningful_event"]), row["fingerprint"], row["created_at"])
+            return SnapshotRecord(
+                row["snapshot_id"], task_id, row["event_cursor"],
+                _decode(row["payload_json"]), bool(row["has_meaningful_event"]),
+                row["fingerprint"], row["created_at"],
+            )
+
+    def list_snapshots(self, task_id: str) -> list[SnapshotRecord]:
+        """Return every retained raw observation for a task in creation order."""
+
+        with self._lock:
+            self.get_task(task_id)
+            rows = self._connection.execute(
+                "SELECT * FROM snapshots WHERE task_id=? ORDER BY snapshot_id ASC",
+                (task_id,),
+            ).fetchall()
+            return [
+                SnapshotRecord(
+                    row["snapshot_id"],
+                    task_id,
+                    row["event_cursor"],
+                    _decode(row["payload_json"]),
+                    bool(row["has_meaningful_event"]),
+                    row["fingerprint"],
+                    row["created_at"],
+                )
+                for row in rows
+            ]
 
     def add_artifact(self, task_id: str, *, kind: str, path: str | None = None, mime_type: str | None = None, size_bytes: int | None = None, sha256: str | None = None, metadata: Mapping[str, Any] | None = None) -> ArtifactRecord:
         with self._lock, self._write_transaction():

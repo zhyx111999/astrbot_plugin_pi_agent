@@ -245,27 +245,6 @@ class PiConnectorPlugin(Star):
                 extension_paths=configured_extension_paths_for_worker(),
             )
 
-        async def notify_task_update(task, _snapshot) -> None:
-            """Send one concise actionable notification, never streaming progress."""
-
-            if not self._config_bool("notify_task_completion", True):
-                return
-            labels = {
-                "completed": "已完成",
-                "failed": "失败",
-                "cancelled": "已取消",
-                "needs_user_decision": "等待你的决定",
-            }
-            status = labels.get(task.status.value, task.status.value)
-            try:
-                await self.astrbot_adapter.send_text(
-                    task.owner_key,
-                    f"Pi 后台任务{status}。\n任务 ID：{task.task_id}\n"
-                    "请使用 pi_task_result 查看结果，或使用对应任务工具继续操作。",
-                )
-            except Exception:  # noqa: BLE001
-                logger.debug("Unable to notify task owner for %s", task.task_id, exc_info=True)
-
         try:
             scheduler = TaskScheduler(
                 registry,
@@ -290,7 +269,6 @@ class PiConnectorPlugin(Star):
                     self._config_value("session_retention_hours", 24)
                 ),
                 session_root=state_root / "sessions",
-                task_update_callback=notify_task_update,
             )
             await scheduler.start()
         except Exception:
@@ -336,13 +314,17 @@ class PiConnectorPlugin(Star):
         return None
 
     def _can_manage_all_tasks(self, event: AstrMessageEvent) -> bool:
-        """Return whether this admin may manage tasks owned by other users."""
-        return self._config_bool("task_require_admin", False) and event.is_admin()
+        """AstrBot administrators may manage every registered Pi task."""
+        return event.is_admin()
 
     def _task_owner_key(self, event: AstrMessageEvent) -> str:
         return capture_task_context(event).owner_key
 
     def _task_is_visible(self, event: AstrMessageEvent, task) -> bool:
+        """Every registered task is readable; writes are owner/admin-only."""
+        return True
+
+    def _task_is_manageable(self, event: AstrMessageEvent, task) -> bool:
         return task.owner_key == self._task_owner_key(event) or self._can_manage_all_tasks(event)
 
     def _legacy_output_key(self, event: AstrMessageEvent) -> str:
@@ -412,7 +394,7 @@ class PiConnectorPlugin(Star):
         return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
     def _visible_task(self, event: AstrMessageEvent, task_id: str):
-        """Return a task only when the caller owns it or is an administrator."""
+        """Return any registered task for read-only inspection."""
 
         if self._task_registry is None:
             return None
@@ -422,8 +404,12 @@ class PiConnectorPlugin(Star):
             return None
         return task if self._task_is_visible(event, task) else None
 
+    def _manageable_task(self, event: AstrMessageEvent, task_id: str):
+        task = self._visible_task(event, task_id)
+        return task if task is not None and self._task_is_manageable(event, task) else None
+
     async def _service_for_task(
-        self, event: AstrMessageEvent, task_id: str
+        self, event: AstrMessageEvent, task_id: str, *, write: bool = False
     ) -> PiTaskService:
         """Load the bridge before enforcing task visibility.
 
@@ -433,12 +419,10 @@ class PiConnectorPlugin(Star):
         """
 
         service = await self._task_service_or_error()
-        if self._visible_task(event, task_id) is None:
-            raise LookupError(
-                "task not found or legacy session id supplied; use pi_send_message "
-                "for pi_open_session sessions, or use the task_id returned by pi_agent "
-                "with pi_task_* tools"
-            )
+        task = self._manageable_task(event, task_id) if write else self._visible_task(event, task_id)
+        if task is None:
+            action = "manage" if write else "read"
+            raise PermissionError(f"You do not have permission to {action} this Pi task")
         return service
 
     def _current_persona(self, event: AstrMessageEvent) -> str | None:
@@ -1028,7 +1012,7 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_status")
     async def pi_task_status(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Read the latest durable state and snapshot for a Pi task.
+        """Read AstrBot task control metadata without Pi event content.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1044,30 +1028,46 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_list")
     async def pi_task_list(self, event: AstrMessageEvent) -> str:
-        """List Pi tasks visible to this conversation owner.
-
-        Administrators receive all tasks; other callers receive their own.
-        """
+        """List every registered Pi task; owner_key identifies write authority."""
         operation = "task_list"
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied)
         try:
             service = await self._task_service_or_error()
-            owner = None if self._can_manage_all_tasks(event) else self._task_owner_key(event)
-            return self._bridge_dump(service.list_tasks(owner_key=owner))
+            return self._bridge_dump(service.list_tasks())
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc))
 
-    @filter.llm_tool(name="pi_task_result")
-    async def pi_task_result(
-        self, event: AstrMessageEvent, task_id: str, offset: int = 0, limit: int = 4
+    @filter.llm_tool(name="pi_task_read")
+    async def pi_task_read(
+        self, event: AstrMessageEvent, task_id: str, cursor: int = 0, limit: int = 100
     ) -> str:
-        """Read a bounded page of task output and persisted artifacts.
+        """Read raw Pi events for a task page; this operation is read-only.
 
         Args:
             task_id(string): Task id returned by pi_agent
-            offset(number): Zero-based result block offset
-            limit(number): Maximum result blocks to return
+            cursor(number): Read events strictly after this Pi event cursor
+            limit(number): Maximum raw events to return
+        """
+        operation = "task_read"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(service.read(task_id, cursor=cursor, limit=limit))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_result")
+    async def pi_task_result(
+        self, event: AstrMessageEvent, task_id: str, offset: int = 0, limit: int = 100
+    ) -> str:
+        """Compatibility alias that reads raw Pi events by event cursor.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+            offset(number): Pi event cursor to read after
+            limit(number): Maximum raw events to return
         """
         operation = "task_result"
         if denied := self._require_task_permission(event):
@@ -1080,7 +1080,7 @@ class PiConnectorPlugin(Star):
 
     @filter.llm_tool(name="pi_task_poll")
     async def pi_task_poll(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Take one short, nonblocking observation of a Pi task.
+        """Ask Pi for one short state observation without returning Pi content.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1108,7 +1108,7 @@ class PiConnectorPlugin(Star):
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied, task_id=task_id)
         try:
-            service = await self._service_for_task(event, task_id)
+            service = await self._service_for_task(event, task_id, write=True)
             return self._bridge_dump(await service.follow_up(task_id, message))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
@@ -1124,7 +1124,7 @@ class PiConnectorPlugin(Star):
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied, task_id=task_id)
         try:
-            service = await self._service_for_task(event, task_id)
+            service = await self._service_for_task(event, task_id, write=True)
             return self._bridge_dump(await service.resume(task_id))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
@@ -1140,7 +1140,7 @@ class PiConnectorPlugin(Star):
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied, task_id=task_id)
         try:
-            service = await self._service_for_task(event, task_id)
+            service = await self._service_for_task(event, task_id, write=True)
             return self._bridge_dump(await service.cancel(task_id))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
@@ -1156,7 +1156,7 @@ class PiConnectorPlugin(Star):
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied, task_id=task_id)
         try:
-            service = await self._service_for_task(event, task_id)
+            service = await self._service_for_task(event, task_id, write=True)
             return self._bridge_dump(await service.delete(task_id))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
@@ -1169,7 +1169,7 @@ class PiConnectorPlugin(Star):
             return self._bridge_error(operation, denied)
         try:
             service = await self._task_service_or_error()
-            owner = None if self._can_manage_all_tasks(event) else self._task_owner_key(event)
+            owner = None
             result = service.session_list(owner_key=owner)
             if event.is_admin():
                 legacy, total = self.pi_connection_manager.list_sessions()
@@ -1229,7 +1229,7 @@ class PiConnectorPlugin(Star):
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied, task_id=task_id)
         try:
-            service = await self._service_for_task(event, task_id)
+            service = await self._service_for_task(event, task_id, write=True)
             return self._bridge_dump(await service.session_resume(task_id))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
@@ -1245,7 +1245,7 @@ class PiConnectorPlugin(Star):
         task = self._visible_task(event, session_id)
         if task is not None:
             try:
-                service = await self._task_service_or_error()
+                service = await self._service_for_task(event, session_id, write=True)
                 return self._bridge_dump(await service.session_delete(session_id))
             except Exception as exc:  # noqa: BLE001
                 return self._bridge_error(operation, safe_error_summary(exc), task_id=session_id)

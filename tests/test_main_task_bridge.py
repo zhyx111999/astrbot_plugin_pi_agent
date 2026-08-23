@@ -55,10 +55,9 @@ async def test_task_status_initializes_registry_before_visibility_check(plugin, 
     assert '"ok":true' in visible
     plugin.pi_task_service.status.assert_called_once_with(task.task_id)
 
-    hidden = await plugin.pi_task_status(other_event, task.task_id)
-    assert '"ok":false' in hidden
-    assert "task not found or legacy session id supplied" in hidden
-    assert plugin.pi_task_service.status.call_count == 1
+    readable = await plugin.pi_task_status(other_event, task.task_id)
+    assert '"ok":true' in readable
+    assert plugin.pi_task_service.status.call_count == 2
     registry.close()
 
 
@@ -143,17 +142,17 @@ async def test_task_access_is_owner_scoped_by_default(plugin, tmp_path):
     owner = _event("qq:owner")
     outsider = _event("qq:other")
     assert plugin._visible_task(owner, owned.task_id) is not None
-    assert plugin._visible_task(owner, other.task_id) is None
-    assert plugin._visible_task(outsider, other.task_id) is not None
+    assert plugin._visible_task(owner, other.task_id) is not None
+    assert plugin._manageable_task(owner, other.task_id) is None
+    assert plugin._manageable_task(outsider, other.task_id) is not None
     registry.close()
 
 
-def test_admin_global_task_access_requires_switch(plugin):
+def test_admin_global_task_access_ignores_legacy_switch(plugin):
     admin = _event("qq:admin", admin=True)
     plugin.plugin_config = {"task_require_admin": False}
-    assert plugin._can_manage_all_tasks(admin) is False
-    plugin.plugin_config = {"task_require_admin": True}
     assert plugin._can_manage_all_tasks(admin) is True
+    assert plugin._can_manage_all_tasks(_event("qq:user")) is False
 
 
 @pytest.mark.asyncio

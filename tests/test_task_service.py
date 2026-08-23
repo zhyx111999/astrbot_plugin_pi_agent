@@ -106,7 +106,7 @@ async def test_shutdown_finalizes_queued_launch(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_create_returns_before_worker_and_three_observer_cycles_pause(tmp_path: Path):
+async def test_create_returns_before_worker_and_repeated_observations_stay_running(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
     scheduler = TaskScheduler(
@@ -129,7 +129,7 @@ async def test_create_returns_before_worker_and_three_observer_cycles_pause(tmp_
 
     for _ in range(3):
         await scheduler.poll_task(task_id)
-    assert registry.get_task(task_id).status is TaskStatus.NEEDS_USER_DECISION
+    assert registry.get_task(task_id).status is TaskStatus.RUNNING
     assert adapter.terminated is False
 
     await service.shutdown()
@@ -163,7 +163,7 @@ async def test_poll_records_a_bounded_remote_pi_state_snapshot(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_main_model_poll_reads_local_state_without_rpc_wait(tmp_path: Path):
+async def test_main_model_poll_explicitly_checks_worker_without_returning_events(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
     scheduler = TaskScheduler(
@@ -185,9 +185,10 @@ async def test_main_model_poll_reads_local_state_without_rpc_wait(tmp_path: Path
     result = await service.poll(task_id)
 
     assert result["ok"] is True
-    assert adapter.state_calls == calls_after_start
-    assert registry.get_latest_snapshot(task_id) == snapshot_before
-    assert registry.get_task(task_id).no_meaningful_event_count == task_before.no_meaningful_event_count
+    assert adapter.state_calls == calls_after_start + 1
+    assert registry.get_latest_snapshot(task_id) != snapshot_before
+    assert registry.get_task(task_id).no_meaningful_event_count >= task_before.no_meaningful_event_count
+    assert result["content"] == []
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -237,9 +238,9 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
     first = await service.poll(task_id)
     second = await service.poll(task_id)
 
-    assert first["has_new_meaningful_event"] is True
-    assert second["has_new_meaningful_event"] is False
-    assert registry.get_latest_snapshot(task_id) == observed
+    assert first["content"] == []
+    assert second["content"] == []
+    assert registry.get_latest_snapshot(task_id).payload == observed.payload
     assert registry.get_latest_snapshot(task_id).payload["events"][0]["payload"]["assistantMessageEvent"]["delta"] == "progress"
 
     await service.shutdown()
@@ -248,7 +249,7 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 
 
 @pytest.mark.asyncio
-async def test_result_is_paginated_and_hides_raw_event_tree(tmp_path: Path):
+async def test_result_reads_raw_pi_events_by_cursor(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
     scheduler = TaskScheduler(
@@ -278,16 +279,14 @@ async def test_result_is_paginated_and_hides_raw_event_tree(tmp_path: Path):
     await scheduler.poll_task(task_id)
     result = service.result(task_id, offset=0, limit=1)
 
-    assert result["progress"]["snapshot"].get("events") is None
-    assert result["progress"]["result_page"] == {
-        "offset": 0,
-        "limit": 1,
+    assert result["content"] == []
+    assert result["events"][0]["payload"]["assistantMessageEvent"]["delta"] == "x" * 5000
+    assert result["progress"]["read"] == {
+        "cursor": 0,
+        "next_cursor": 1,
         "returned": 1,
-        "total": 1,
         "has_more": False,
     }
-    assert result["content"][0]["truncated"] is True
-    assert len(result["content"][0]["text"]) == 4000
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -329,9 +328,8 @@ async def test_message_end_provider_error_transitions_task_to_failed(tmp_path: P
 
     result = service.result(task_id)
     assert registry.get_task(task_id).status is TaskStatus.FAILED
-    assert result["content"] == [
-        {"type": "error", "text": "OpenAI API error (502): upstream unavailable"}
-    ]
+    assert result["content"] == []
+    assert result["events"][0]["payload"]["message"]["errorMessage"] == "OpenAI API error (502): upstream unavailable"
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -374,11 +372,11 @@ async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Pa
 
     assert status["content"] == []
     assert repeated_status["content"] == []
-    assert status["progress"]["snapshot"].get("events") is None
-    assert repeated_status["progress"]["snapshot"].get("events") is None
-    assert first_poll["content"]
+    assert "snapshot" not in status["progress"]
+    assert "snapshot" not in repeated_status["progress"]
+    assert first_poll["content"] == []
     assert repeated_poll["content"] == []
-    assert repeated_poll["progress"]["snapshot"].get("events") is None
+    assert service.read(task_id, cursor=0, limit=10)["events"][0]["payload"]["assistantMessageEvent"]["delta"] == "once"
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -386,21 +384,15 @@ async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_terminal_notification_is_once_and_running_is_silent(tmp_path: Path):
+async def test_terminal_observation_never_notifies_chat(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
-    notifications = []
-
-    async def notify(task, snapshot):
-        notifications.append((task.task_id, task.status.value, snapshot.get("phase")))
-
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
         adapter_factory=FakeAdapter,
         poll_interval_seconds=3600,
         no_meaningful_event_limit=1,
-        task_update_callback=notify,
     )
     service = PiTaskService(registry, scheduler)
     created = await service.create_task(owner_key="qq:1", task="inspect")
@@ -410,7 +402,7 @@ async def test_terminal_notification_is_once_and_running_is_silent(tmp_path: Pat
     await scheduler.poll_task(task_id)
     await scheduler.poll_task(task_id)
 
-    assert notifications == [(task_id, TaskStatus.NEEDS_USER_DECISION.value, "working")]
+    assert registry.get_task(task_id).status is TaskStatus.RUNNING
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -435,7 +427,7 @@ async def test_resume_steers_same_worker_and_cancel_delete_cleanup(tmp_path: Pat
     await asyncio.sleep(0)
     await scheduler.poll_task(task_id)
     adapter = FakeAdapter.instances[0]
-    assert registry.get_task(task_id).status is TaskStatus.NEEDS_USER_DECISION
+    assert registry.get_task(task_id).status is TaskStatus.RUNNING
 
     resumed = await service.resume(task_id)
     assert resumed["ok"] is True

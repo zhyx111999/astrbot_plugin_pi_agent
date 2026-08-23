@@ -16,12 +16,11 @@ def test_task_lifecycle_and_resume(tmp_path):
             updated, _, inserted = registry.record_snapshot(task.task_id, {"phase": "waiting"}, has_meaningful_event=False)
             assert inserted is (index == 0)
             assert updated.status is TaskStatus.RUNNING
-        paused, _, _ = registry.record_snapshot(task.task_id, {"phase": "waiting", "tick": 3}, has_meaningful_event=False)
-        assert paused.status is TaskStatus.NEEDS_USER_DECISION
-        assert paused.no_meaningful_event_count == 3
-        resumed = registry.resume_task(task.task_id)
-        assert resumed.status is TaskStatus.RUNNING
-        assert resumed.no_meaningful_event_count == 0
+        observed, _, _ = registry.record_snapshot(task.task_id, {"phase": "waiting", "tick": 3}, has_meaningful_event=False)
+        assert observed.status is TaskStatus.RUNNING
+        assert observed.no_meaningful_event_count == 3
+        assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
+        assert registry.get_task(task.task_id).no_meaningful_event_count == 3
 
 
 def test_meaningful_event_clears_counter_and_updates_cursor(tmp_path):
@@ -34,6 +33,7 @@ def test_meaningful_event_clears_counter_and_updates_cursor(tmp_path):
         assert updated.no_meaningful_event_count == 0
         assert updated.event_cursor == "42"
         assert registry.get_latest_snapshot(task.task_id).payload == {"n": 2}
+        assert [item.payload for item in registry.list_snapshots(task.task_id)] == [{"n": 1}, {"n": 2}]
 
 
 def test_repeated_snapshot_is_deduplicated_but_poll_still_counts(tmp_path):
@@ -83,7 +83,7 @@ def test_latest_snapshot_replaces_previous_observation(tmp_path):
             count = registry._connection.execute(
                 "SELECT COUNT(*) FROM snapshots WHERE task_id=?", (task.task_id,)
             ).fetchone()[0]
-        assert count == 1
+        assert count == 3
 
 
 def test_artifacts_are_metadata_and_delete_cascades(tmp_path):

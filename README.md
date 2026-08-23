@@ -9,9 +9,10 @@
 - **不会等待 Pi 回合结束**：`pi_agent` 只创建任务、保存上下文并排队启动 worker，立即返回结构化结果。
 - **不占用当前 AstrBot 工具调用**：Pi 的 JSONL stdin/stdout 由后台 worker 处理，不把长任务包在一次 AstrBot 工具调用里。
 - **没有硬超时和空闲超时**：插件不会因为任务运行超过 900 秒、某段时间没有输出，或一次观察调用较慢而杀死 Pi。
-- **观察式轮询**：后台 observer 按 `poll_interval_seconds` 请求一次 Pi 状态并保存快照；主模型在自己的后续回合调用 `pi_task_poll`、`pi_task_status` 或 `pi_task_result` 只读取本地最新结果，不等待 Pi 回合或控制确认。
-- **无进展时暂停决策**：连续 `no_meaningful_event_limit` 次没有助手输出、工具状态变化、阶段变化或新 artifact 时，状态变为 `needs_user_decision`。Pi 进程、session、任务快照和 artifact 元数据都保留，不会自动终止。
-- **最新快照优先**：每个任务只保留最新观察结果供主模型读取，不把大量中间事件堆进 AstrBot 会话。
+- **AstrBot 主动检查**：Pi worker 的 stdout JSONL 只由插件内部接收并持久化；`pi_task_status` 不返回 Pi 内容，`pi_task_poll` 才按 AstrBot 的调用显式请求一次短状态检查。
+- **Pi 完全静默**：没有完成、失败、进度或无输出通知，后台 observer 不向任何 AstrBot 会话发送消息，也不唤醒主模型。
+- **原始会话按游标读取**：`pi_task_read` 按 Pi event cursor 返回原始事件页；插件不把事件提炼成摘要或自然语言结果。历史观察在任务 retention 期间保留。
+- **读写权限分离**：普通用户可以列出、检查、轮询和读取全部登记任务；只有任务 owner 或 AstrBot 管理员可以 follow-up、resume、cancel、delete。管理员始终可以管理全部任务。
 - **任务彼此隔离**：每个任务有独立进程、Pi session、工作区、事件游标和 registry 记录，同一 AstrBot 会话可同时运行多个 Pi 任务。
 
 Pi 官方 CLI、RPC JSONL 协议和 AstrBot 官方代码均保持原样。本仓库只维护独立适配器和任务桥接层；停用异步桥接后，旧 `/pi`、`/pic` 会话线路仍可用。
@@ -36,8 +37,8 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - `pi_agent_bridge/runtime.py`：固定选择插件内置 Node `22.19.0` / Pi `0.84.2` runtime，不向用户暴露可执行文件路径覆盖配置。
 - `pi_agent_bridge/rpc.py`：公开 Pi RPC 的 JSONL 读写、事件游标、steer、cancel、resume。
 - `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、快照、游标、artifact 和 retention。
-- `pi_agent_bridge/scheduler.py`：并发限制、后台观察、无意义事件计数和重启接管。
-- `pi_agent_bridge/service.py`：给 AstrBot 工具使用的非阻塞任务/session facade。
+- `pi_agent_bridge/scheduler.py`：并发限制、后台观察、worker 生命周期和重启接管。
+- `pi_agent_bridge/service.py`：给 AstrBot 工具使用的任务控制和原始事件读取 facade。
 - `pi_agent_bridge/context.py`：创建任务时构造人设、当前事件公开字段和原始消息的一次性快照。
 - `pi_agent_bridge/provider.py`：将 AstrBot OpenAI-compatible provider 映射为 Pi 的 worker 配置；密钥只进入子进程环境。
 - `pi_agent_bridge/artifacts.py`：文本、Markdown、JSON、文件和媒体 artifact 的统一描述。
@@ -68,18 +69,15 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | 配置项 | 默认值 | 作用 |
 | --- | ---: | --- |
 | `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
-| `task_require_admin` | `false` | 为 `true` 时，AstrBot 管理员可以查看和管理所有用户的 Pi 任务；普通用户始终只能管理自己的任务。关闭时所有用户都按任务 owner 隔离。 |
 | `pi_model` | `""` | 直接选择 AstrBot 中已经配置好的具体 Provider/模型。所有后台 Pi 任务固定使用这个模型，不继承当前聊天模型。仅支持 OpenAI-compatible Provider。 |
 | `pi_session_dir` | `~/.pi/agent/sessions` | 旧版 `/pi`、`/pic` 线路使用的 Pi 原生会话目录。后台任务使用独立会话。 |
 | `state_directory` | `~/.pi/astrbot_plugin_pi_agent` | 桥接状态目录，存放任务数据库、会话、Agent 配置、工作区和 artifact 元数据。 |
 | `task_database` | `~/.pi/astrbot_plugin_pi_agent/tasks.db` | SQLite WAL 任务注册表路径。 |
 | `workspace_root` | `~/.pi/astrbot_plugin_pi_agent/workspaces` | 任务工作区根目录，每个任务使用独立子目录。 |
 | `poll_interval_seconds` | `60` | 后台观察周期，不是任务超时。 |
-| `no_meaningful_event_limit` | `3` | 连续无意义观察次数，达到后进入 `needs_user_decision`。 |
 | `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和 artifact。活动/暂停/orphaned 任务不被误删。 |
 | `max_concurrent_tasks` | `4` | 同时运行的独立 Pi worker 数量。 |
-| `command_timeout_seconds` | `10` | 仅限制后台 observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；`pi_task_poll` 只读本地快照，不等待 Pi。不是硬超时或空闲超时。 |
-| `notify_task_completion` | `true` | 任务完成、失败、取消或需要用户决定时向任务所属会话发送一次简短通知；运行中不发送中间进度。 |
+| `command_timeout_seconds` | `10` | 仅限制 poll/observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；不是任务硬超时或空闲超时。 |
 | `inherit_persona` | `true` | 创建时复制主 Agent 人设；任务 prompt 同时保存当前事件的公开字段和原始消息快照。之后不会自动同步新消息。 |
 | `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个路径单独一项，填写包含 `SKILL.md` 的目录绝对路径。 |
 | `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
@@ -87,7 +85,7 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 
 异步任务的 Pi Provider/RPC 错误会使任务转为 `failed`，并可通过 `pi_task_result` 查看错误内容；不会继续显示为 `running`。legacy `pi_open_session` 与 `pi_agent` 使用不同 ID，但 `pi_session_inspect` 和 `pi_session_delete` 现在都可按对应类型处理。legacy 会话创建后即使 Pi 尚未落盘 JSONL，也能在当前插件进程中被列出、检查和删除。
 
-`pi_task_status` 只返回状态和快照元数据，不重复输出 Pi 的中间文本；`pi_task_poll` 只在发现新的持久化快照时返回新增内容，重复调用不会重复汇报同一段进度。返回的 `progress.observer` 给出最近观察时间、观察周期和预计下次观察倒计时；在倒计时结束前重复 poll 不会推动 worker。`pi_task_result` 默认返回有限长度的结果分页，使用 offset/limit 获取后续块，不再向主模型暴露完整事件树、reasoning 或工具参数。
+`pi_task_status` 只返回 AstrBot 任务元数据、Pi session 标识、event cursor 和 observer 时间，不返回 Pi 中间内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限状态检查，返回同样的控制元数据，也不返回 Pi 事件。需要阅读内容时调用 `pi_task_read(task_id, cursor?, limit?)`，它按 cursor 返回原始 Pi 事件，不做摘要、改写或语义筛选；`pi_task_result` 仅作为兼容别名。任务 owner 可以管理自己的任务，普通用户对其他用户任务只有读取权限，AstrBot 管理员可以管理全部任务。后台 observer 只负责维持 worker 和持久化原始事件，永不主动通知聊天。
 
 Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 
@@ -102,22 +100,23 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 | 工具 | 作用 |
 | --- | --- |
 | `pi_agent(prompt, workspace?)` | 创建独立长任务，立即返回 `task_id`。 |
-| `pi_task_status(task_id)` | 读取持久化任务状态和最新快照。 |
-| `pi_task_list()` | 列出当前用户可见的任务；只有开启管理员全局管理后，管理员才可见全部任务。 |
-| `pi_task_result(task_id, offset?, limit?)` | 返回任务结果的有限分页摘要和 artifact；使用 offset/limit 查看后续块。 |
-| `pi_task_poll(task_id)` | 刷新本地事件缓冲并返回最新 envelope；不请求远端 Pi 状态。 |
-| `pi_task_follow_up(task_id, message)` | 使用 Pi steer 向活动任务追加要求。 |
-| `pi_task_resume(task_id)` | 继续 `needs_user_decision` 或可恢复任务。 |
-| `pi_task_cancel(task_id)` | 取消 worker，但保留任务历史。 |
-| `pi_task_delete(task_id)` | 取消并删除任务元数据及任务拥有的资源。 |
-| `pi_session_list()` | 列出当前用户可见的异步任务对应的 Pi session；只有开启管理员全局管理后，管理员才可见全部 session。 |
+| `pi_task_status(task_id)` | 读取持久化 AstrBot 任务控制元数据，不返回 Pi 事件。 |
+| `pi_task_list()` | 列出全部登记的异步 Pi 任务，包含 owner 和 task/session 元数据。 |
+| `pi_task_read(task_id, cursor?, limit?)` | 只读指定任务的原始 Pi 事件页；按 cursor 继续读取。 |
+| `pi_task_result(task_id, offset?, limit?)` | `pi_task_read` 的兼容别名，offset 表示 Pi event cursor。 |
+| `pi_task_poll(task_id)` | 由 AstrBot 主动请求一次短 Pi 状态检查；只返回控制元数据，不返回 Pi 内容。 |
+| `pi_task_follow_up(task_id, message)` | owner 或管理员使用 Pi steer 向活动任务追加要求。 |
+| `pi_task_resume(task_id)` | owner 或管理员恢复可恢复任务。 |
+| `pi_task_cancel(task_id)` | owner 或管理员取消 worker，但保留任务历史。 |
+| `pi_task_delete(task_id)` | owner 或管理员取消并删除任务元数据及任务资源。 |
+| `pi_session_list()` | 列出全部登记的异步 Pi session；legacy session 仍按原有管理员线路处理。 |
 | `pi_session_inspect(session_id)` | 检查 `pi_agent` 的 task ID 或 legacy `pi_open_session` session ID。 |
 | `pi_session_resume(task_id)` | 恢复任务关联的 session。仅接受 `pi_agent` task ID。 |
 | `pi_session_delete(session_id)` | 删除 task-owned session 或 legacy session。 |
 | `pi_legacy_output_next()` | 获取被截断的旧版 Pi 命令输出下一页。 |
 | `pi_artifact_inspect(task_id)` | 查看任务生成的文本、JSON、文件和媒体 artifact。 |
 
-所有异步工具都返回相同的 JSON envelope。成功和失败都交给主模型二次加工：
+所有异步控制工具都返回 JSON envelope。`status/poll` 的 envelope 不包含 Pi 原始内容；`read/result` 额外返回 `events` 分页。成功和失败都交给主模型二次加工：
 
 ```json
 {
@@ -126,7 +125,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
   "operation": "task_poll",
   "task_id": "task-...",
   "status": "running",
-  "has_new_meaningful_event": true,
+  "has_new_meaningful_event": false,
   "progress": {},
   "content": [],
   "artifacts": [],
@@ -143,7 +142,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 - 需要并行的独立子任务；
 - 用户明确要求后台持续执行。
 
-调用后不要在同一次回合等待 Pi 完成。下一次主模型回合读取 `pi_task_poll`；这是一次只读本地事件缓冲和持久化快照的短调用，不等待 Pi，也不会把长任务重新包进 AstrBot 工具调用。远端 Pi 状态由后台 observer 按 `poll_interval_seconds` 请求，`command_timeout_seconds` 只约束该状态请求以及 steer/cancel/resume 等短控制确认。若返回 `needs_user_decision`，向用户说明“暂时没有新进展”，再由用户决定继续、追加要求、查看、取消或删除。主模型正在处理其他消息时，快照只在 registry 中保留最新值，不会阻塞会话。
+调用后不要在同一次回合等待 Pi 完成。后续由 AstrBot 根据用户需求调用 `pi_task_list` 找到目标 task，再调用 `pi_task_status` 或 `pi_task_poll` 检查控制状态；发现 event cursor 增长后，调用 `pi_task_read` 读取对应 Pi 原始事件并自行判断下一步。Pi 的完成、失败和中间输出都不会主动进入任何聊天会话。普通用户可读取其他用户任务，但只有 owner 或管理员可以改变任务。
 
 ### 旧会话工具与命令
 

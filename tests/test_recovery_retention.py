@@ -205,7 +205,7 @@ async def test_restart_keeps_logically_paused_task_paused(tmp_path: Path):
         has_meaningful_event=False,
         no_meaningful_event_limit=1,
     )
-    assert registry.get_task(task.task_id).status is TaskStatus.NEEDS_USER_DECISION
+    assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -215,9 +215,9 @@ async def test_restart_keeps_logically_paused_task_paused(tmp_path: Path):
     )
 
     await scheduler.start()
-    assert registry.get_task(task.task_id).status is TaskStatus.NEEDS_USER_DECISION
+    assert registry.get_task(task.task_id).status is TaskStatus.ORPHANED
     await scheduler.poll_task(task.task_id)
-    assert registry.get_task(task.task_id).status is TaskStatus.NEEDS_USER_DECISION
+    assert registry.get_task(task.task_id).status is TaskStatus.ORPHANED
 
     await scheduler.shutdown()
     registry.close()
@@ -270,7 +270,7 @@ async def test_restart_attempts_takeover_for_logically_paused_worker(tmp_path: P
         has_meaningful_event=False,
         no_meaningful_event_limit=1,
     )
-    assert registry.get_task(task.task_id).status is TaskStatus.NEEDS_USER_DECISION
+    assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
 
     factory = TakeoverFactory()
     scheduler = TaskScheduler(
@@ -285,7 +285,7 @@ async def test_restart_attempts_takeover_for_logically_paused_worker(tmp_path: P
     await scheduler.start()
 
     assert [item["task_id"] for item in factory.takeover_calls] == [task.task_id]
-    assert registry.get_task(task.task_id).status is TaskStatus.NEEDS_USER_DECISION
+    assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
     assert scheduler.adapter(task.task_id) is factory.created[0]
 
     await scheduler.shutdown()

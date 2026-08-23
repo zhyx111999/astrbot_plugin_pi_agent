@@ -5,12 +5,6 @@
     "hint": "关闭后仍保留旧版 /pi 和 /pic 会话线路，不会创建 Pi 后台工作进程。",
     "default": true
   },
-  "task_require_admin": {
-    "type": "bool",
-    "description": "允许管理员管理所有用户的 Pi 任务",
-    "hint": "关闭时每个用户只能查看和管理自己创建的任务；开启后，AstrBot 管理员可以查看、追问、恢复、取消、删除和管理任意用户的任务。普通用户始终只能管理自己的任务。",
-    "default": false
-  },
   "pi_model": {
     "type": "string",
     "description": "后台 Pi 固定模型",
@@ -53,17 +47,6 @@
       "step": 1
     }
   },
-  "no_meaningful_event_limit": {
-    "type": "int",
-    "description": "进入 needs_user_decision 前允许的无进展观察次数",
-    "hint": "有意义的输出、工具状态变化、任务状态变化和新 artifact 都会重置计数。达到上限后仍会保留工作进程。",
-    "default": 3,
-    "slider": {
-      "min": 1,
-      "max": 20,
-      "step": 1
-    }
-  },
   "session_retention_hours": {
     "type": "int",
     "description": "已结束任务元数据和托管 artifact 的保留时长",
@@ -89,14 +72,8 @@
   "command_timeout_seconds": {
     "type": "float",
     "description": "仅用于 Pi RPC 控制确认的超时时间",
-    "hint": "这不是任务硬超时，也不是空闲超时。它限制后台观察器的 get_state 请求，以及 steer、cancel、resume 等短控制操作的确认时间。pi_task_poll 只读取本地缓冲事件和最新持久化快照，不等待 Pi。",
+    "hint": "这不是任务硬超时，也不是空闲超时。它限制 poll/observer 的 get_state 请求，以及 steer、cancel、resume 等短控制操作的确认时间。",
     "default": 10.0
-  },
-  "notify_task_completion": {
-    "type": "bool",
-    "description": "任务结束时主动通知任务所属会话",
-    "hint": "仅在任务完成、失败、取消或需要用户决定时发送一次简短通知，不会发送运行中的中间进度。",
-    "default": true
   },
   "inherit_persona": {
     "type": "bool",

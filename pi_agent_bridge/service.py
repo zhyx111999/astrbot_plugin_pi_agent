@@ -30,7 +30,6 @@ class PiTaskService:
         self.scheduler = scheduler
         self._launch_tasks: set[asyncio.Task[None]] = set()
         self._launch_task_ids: dict[asyncio.Task[None], str] = {}
-        self._reported_snapshot_ids: dict[str, int] = {}
         self._closed = False
 
     @property
@@ -196,16 +195,11 @@ class PiTaskService:
         await self.shutdown()
 
     async def poll(self, task_id: str) -> dict[str, Any]:
-        """Read the newest observer snapshot without touching the worker.
-
-        The scheduler alone performs remote state requests and progresses the
-        three-observation no-progress counter.  Keeping this tool local makes
-        it safe for the main model to call repeatedly while it is handling
-        unrelated chat turns.
-        """
+        """Ask Pi for one bounded state observation without returning its output."""
 
         try:
-            return self.envelope("task_poll", task_id, report_newness=True)
+            await self.scheduler.poll_task(task_id)
+            return self.envelope("task_poll", task_id)
         except Exception as exc:  # noqa: BLE001
             return self.error("task_poll", safe_error_summary(exc), task_id=task_id)
 
@@ -223,7 +217,6 @@ class PiTaskService:
     async def delete(self, task_id: str) -> dict[str, Any]:
         try:
             await self.scheduler.delete(task_id)
-            self._reported_snapshot_ids.pop(task_id, None)
             return self.ok("task_delete", task_id=task_id, status="deleted")
         except Exception as exc:  # noqa: BLE001
             return self.error("task_delete", safe_error_summary(exc), task_id=task_id)
@@ -235,28 +228,38 @@ class PiTaskService:
             return self.error("task_status", safe_error_summary(exc), task_id=task_id)
 
     def result(
-        self, task_id: str, *, offset: int = 0, limit: int = 4
+        self, task_id: str, *, offset: int = 0, limit: int = 100
     ) -> dict[str, Any]:
+        """Compatibility alias for direct raw Pi event reading."""
+
+        result = self.read(task_id, cursor=offset, limit=limit)
+        result["operation"] = "task_result"
+        return result
+
+    def read(
+        self, task_id: str, *, cursor: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        """Return a cursor page of raw Pi events without semantic conversion."""
+
         try:
-            if offset < 0 or limit < 1:
-                raise ValueError("offset must be non-negative and limit must be positive")
-            result = self.envelope("task_result", task_id)
-            snapshot = self.registry.get_latest_snapshot(task_id)
-            payload = snapshot.payload if snapshot else {}
-            events = payload.get("events", []) if isinstance(payload, dict) else []
-            blocks = _content_blocks(events, include_all=False)
-            page = [_truncate_block(block) for block in blocks[offset : offset + limit]]
-            result["content"] = page
-            result["progress"]["result_page"] = {
-                "offset": offset,
-                "limit": limit,
+            if cursor < 0 or limit < 1:
+                raise ValueError("cursor must be non-negative and limit must be positive")
+            events = _raw_events(self.registry.list_snapshots(task_id), cursor=cursor)
+            page = events[:limit]
+            next_cursor = cursor
+            if page:
+                next_cursor = _event_cursor(page[-1], default=cursor)
+            result = self.envelope("task_read", task_id)
+            result["events"] = page
+            result["progress"]["read"] = {
+                "cursor": cursor,
+                "next_cursor": next_cursor,
                 "returned": len(page),
-                "total": len(blocks),
-                "has_more": offset + len(page) < len(blocks),
+                "has_more": len(events) > len(page),
             }
             return result
         except Exception as exc:  # noqa: BLE001
-            return self.error("task_result", safe_error_summary(exc), task_id=task_id)
+            return self.error("task_read", safe_error_summary(exc), task_id=task_id)
 
     def list_tasks(self, owner_key: str | None = None) -> dict[str, Any]:
         try:
@@ -330,44 +333,21 @@ class PiTaskService:
         except Exception as exc:  # noqa: BLE001
             return self.error(operation, safe_error_summary(exc), task_id=task_id)
 
-    def envelope(
-        self,
-        operation: str,
-        task_id: str,
-        *,
-        include_all_events: bool = False,
-        report_newness: bool = False,
-    ) -> dict[str, Any]:
+    def envelope(self, operation: str, task_id: str) -> dict[str, Any]:
+        """Return task control metadata without Pi event content."""
+
         task = self.registry.get_task(task_id)
         snapshot = self.registry.get_latest_snapshot(task_id)
-        snapshot_payload = snapshot.payload if snapshot else {}
-        events = snapshot_payload.get("events", []) if isinstance(snapshot_payload, dict) else []
-        has_new_meaningful_event = False
-        is_new_snapshot = False
-        if report_newness and snapshot is not None:
-            previous_id = self._reported_snapshot_ids.get(task_id)
-            is_new_snapshot = previous_id != snapshot.snapshot_id
-            has_new_meaningful_event = snapshot.has_meaningful_event and is_new_snapshot
-            self._reported_snapshot_ids[task_id] = snapshot.snapshot_id
-        visible_snapshot = dict(snapshot_payload) if isinstance(snapshot_payload, dict) else {}
-        if not include_all_events and not is_new_snapshot:
-            visible_snapshot.pop("events", None)
         return self.ok(
             operation,
             task_id=task.task_id,
             status=task.status.value,
-            has_new_meaningful_event=has_new_meaningful_event,
             progress={
                 "task": self._task_dict(task),
-                "snapshot": visible_snapshot,
+                "latest_snapshot_id": snapshot.snapshot_id if snapshot else None,
+                "latest_snapshot_at": snapshot.created_at if snapshot else None,
                 "observer": self.scheduler.observation_info(task_id),
-                "no_meaningful_event_count": task.no_meaningful_event_count,
             },
-            content=(
-                _content_blocks(events, include_all=include_all_events)
-                if (include_all_events or is_new_snapshot)
-                else []
-            ),
             artifacts=[
                 self._artifact_dict(item)
                 for item in self.registry.list_artifacts(task_id)
@@ -451,40 +431,21 @@ class PiTaskService:
         }
 
 
-
-def _truncate_block(block: dict[str, Any], max_length: int = 4000) -> dict[str, Any]:
-    result = dict(block)
-    text = result.get("text")
-    if isinstance(text, str) and len(text) > max_length:
-        result["text"] = text[: max_length - 3] + "..."
-        result["truncated"] = True
-    return result
+def _event_cursor(event: Mapping[str, Any], *, default: int) -> int:
+    try:
+        return max(default, int(event.get("cursor", default)))
+    except (TypeError, ValueError):
+        return default
 
 
-def _content_blocks(events: Any, *, include_all: bool) -> list[dict[str, Any]]:
-    if not isinstance(events, list):
-        return []
-    blocks: list[dict[str, Any]] = []
-    for event in events:
-        if not isinstance(event, dict):
+def _raw_events(snapshots: list[Any], *, cursor: int) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        payload = getattr(snapshot, "payload", {})
+        raw = payload.get("events", []) if isinstance(payload, Mapping) else []
+        if not isinstance(raw, list):
             continue
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        update = payload.get("assistantMessageEvent") or payload.get("messageEvent")
-        text = update.get("delta") if isinstance(update, dict) else payload.get("text")
-        if isinstance(text, str) and text:
-            blocks.append({"type": "text", "text": text})
-        if payload.get("type") == "message_end":
-            message = payload.get("message")
-            if isinstance(message, dict) and message.get("stopReason") == "error":
-                error = message.get("errorMessage") or "Pi agent turn failed"
-                blocks.append({"type": "error", "text": str(error)})
-                continue
-        if payload.get("type") in {"rpc_error", "error"}:
-            error = payload.get("message") or payload.get("error") or "Pi RPC failed"
-            blocks.append({"type": "error", "text": str(error)})
-            continue
-        if include_all and payload.get("type") in {"agent_end", "tool_end", "artifact"}:
-            blocks.append({"type": "event", "event": payload})
-    return blocks
+        for event in raw:
+            if isinstance(event, dict) and _event_cursor(event, default=0) > cursor:
+                events.append(event)
+    return events
