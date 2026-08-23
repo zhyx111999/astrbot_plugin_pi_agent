@@ -110,6 +110,12 @@
     "hint": "填写包含 SKILL.md 的 Skill 目录绝对路径，每个路径单独作为一项。任务启动时会通过 Pi 公共 CLI 的 --skill 参数传入；路径不存在会导致对应任务结构化启动失败。",
     "default": []
   },
+  "pi_extension_paths": {
+    "type": "list",
+    "description": "追加的 Pi 用户扩展文件或目录",
+    "hint": "填写 Pi 官方扩展文件或扩展目录的绝对路径，每个路径单独一项。任务启动时会通过 Pi 公共 CLI 的 --extension 参数传入；路径不存在会导致对应任务结构化启动失败。",
+    "default": []
+  },
   "pi_mcp_config_paths": {
     "type": "list",
     "description": "外部 Pi 扩展或 MCP 配置路径",

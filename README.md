@@ -81,13 +81,16 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | `command_timeout_seconds` | `10` | 仅限制后台 observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；`pi_task_poll` 只读本地快照，不等待 Pi。不是硬超时或空闲超时。 |
 | `inherit_persona` | `true` | 创建时复制主 Agent 人设；任务 prompt 同时保存当前事件的公开字段和原始消息快照。之后不会自动同步新消息。 |
 | `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个路径单独一项，填写包含 `SKILL.md` 的目录绝对路径。 |
+| `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
 | `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |
 
-### Skill 与 MCP 边界
+### Skill、扩展与 MCP 边界
 
-Pi 官方运行时保持不变。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径，例如 `C:/Users/nsus/.pi/agent/skills/my-skill` 或 `/home/user/.pi/agent/skills/my-skill`。插件会在任务启动时校验路径；路径不存在只会让对应任务结构化启动失败，不会阻止插件加载。传入路径不代表 Pi 一定成功加载 Skill，实际结果以任务快照或结果为准。
+Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 
-MCP 和外部 Pi 扩展路径当前不能通过此桥接层配置。`pi_mcp_config_paths` 必须保持空列表 `[]`；填写任意路径会返回结构化 unsupported-capability envelope，路径不会传给 Pi，也不会自动导入 AstrBot MCP 服务。若要使用外部 Pi 扩展，应将其安装到 Pi 官方支持的用户级扩展目录，由 Pi 自己加载，而不是填写此项。
+Pi 用户扩展通过 `pi_extension_paths` 配置，填写扩展文件或扩展目录的绝对路径。任务启动时会作为独立的 `--extension <path>` 参数传给 Pi。Pi 官方内置工具仍然正常可用，用户扩展工具会在 Pi worker 内按 Pi 官方规则注册。
+
+MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空列表 `[]`；Pi `0.84.2` RPC 没有公开的原生 MCP 入口，填写任意路径会返回结构化 unsupported-capability envelope，路径不会传给 Pi，也不会自动导入 AstrBot MCP 服务。
 
 ## AstrBot LLM 工具
 

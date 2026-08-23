@@ -185,11 +185,19 @@ class PiConnectorPlugin(Star):
         # The provider and model are captured with each task so every worker
         # uses the one fixed plugin configuration, never the current chat model.
         configured_skill_paths = self._config_value("pi_skill_paths", [])
+        configured_extension_paths = self._config_value("pi_extension_paths", [])
 
         def configured_skill_paths_for_worker() -> tuple[str, ...]:
             return validate_resource_paths(
                 configured_skill_paths,
                 label="pi_skill_paths",
+                require_exists=True,
+            )
+
+        def configured_extension_paths_for_worker() -> tuple[str, ...]:
+            return validate_resource_paths(
+                configured_extension_paths,
+                label="pi_extension_paths",
                 require_exists=True,
             )
 
@@ -222,6 +230,7 @@ class PiConnectorPlugin(Star):
                 environment=binding.environment,
                 agent_dir=binding.agent_dir,
                 skill_paths=configured_skill_paths_for_worker(),
+                extension_paths=configured_extension_paths_for_worker(),
             )
 
         try:

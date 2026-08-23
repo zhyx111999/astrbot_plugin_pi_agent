@@ -50,8 +50,9 @@ There is no hard task timeout and no idle timeout. `command_timeout_seconds` bou
 
 - At creation time Pi receives the configured AstrBot persona (when enabled) plus a one-time snapshot of the current event's public fields and source message. Later messages are not synchronized automatically; use `pi_task_follow_up`.
 - All background Pi tasks use the single fixed `pi_model` selection, which points to an already-configured AstrBot Provider/model instance. The worker never follows the provider or model selected for the current chat. The adapter accepts OpenAI-compatible providers only. API keys are kept in the worker environment and must not be copied into prompts, task metadata, snapshots, or replies.
-- Pi official code and RPC remain unchanged. Each configured Skill directory is passed to the worker through a repeated public CLI argument (`--skill <path>`). Configure `pi_skill_paths` as a list of absolute directories containing `SKILL.md`; a missing path fails only that task at launch. This proves only that the path was supplied, not that Pi loaded the Skill; rely on the task snapshot/result for runtime evidence.
-- Pi `0.84.2` RPC has no native MCP bridge. Keep `pi_mcp_config_paths` empty: AstrBot MCP servers and external Pi extension paths are not inherited or loaded by this bridge. Install external Pi extensions through Pi's own user-level extension mechanism instead.
+- Pi official code and RPC remain unchanged. The plugin does not scan or inherit AstrBot Skills, MCP servers, tools, or extensions. Each configured Skill directory is passed to the worker through a repeated public CLI argument (`--skill <path>`). Configure `pi_skill_paths` as a list of absolute directories containing `SKILL.md`; a missing path fails only that task at launch. This proves only that the path was supplied, not that Pi loaded the Skill; rely on the task snapshot/result for runtime evidence.
+- Pi user extensions are passed only from the plugin's `pi_extension_paths` list through repeated `--extension <path>` arguments. Pi's built-in tools remain enabled because the bridge does not pass `--no-builtin-tools`, `--no-tools`, or a restrictive tool allowlist.
+- Pi `0.84.2` RPC has no native MCP bridge. Keep `pi_mcp_config_paths` empty: AstrBot MCP servers and tools are not inherited or loaded by this bridge.
 
 ## Safety and user control
 
