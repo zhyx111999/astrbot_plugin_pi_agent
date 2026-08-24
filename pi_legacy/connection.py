@@ -357,6 +357,13 @@ class PiConnection:
 
         return {"type": "event", "event": event}
 
+    async def set_auto_compaction(self, enabled: bool = True) -> dict[str, Any]:
+        """Enable Pi's native automatic context compaction."""
+
+        return await self.send_command(
+            {"type": "set_auto_compaction", "enabled": bool(enabled)}
+        )
+
     async def new_session(self, parent_session: str | None = None) -> dict[str, Any]:
         """Start a fresh session in the current RPC process."""
         command: dict[str, Any] = {"type": "new_session"}

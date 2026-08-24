@@ -272,6 +272,7 @@ class PiConnectionManager:
         await conn.start()
 
         result = await conn.new_session()
+        await conn.set_auto_compaction(True)
         if result.get("data", {}).get("cancelled"):
             raise PiError("Session creation was cancelled by an extension")
 

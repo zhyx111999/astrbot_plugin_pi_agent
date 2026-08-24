@@ -26,9 +26,10 @@ At creation time, the new task receives a one-time snapshot of the current AstrB
 3. When a later user turn requires Pi information, call `pi_task_list` or the known task tool. After each list/status/poll/read call, end the current tool loop; never chain polling calls in one turn.
 4. Call `pi_task_status` for control metadata without Pi content.
 5. Call `pi_task_poll` when AstrBot explicitly needs one short Pi state observation. It returns control metadata only and does not return Pi events.
-6. When the user asks to inspect the work, call `pi_task_read(task_id, cursor?, limit?)` to read raw lines from the task's native Pi session JSONL file. The plugin does not parse, summarize, classify, or rewrite these lines; AstrBot reads the complete session itself. Use the returned line cursor to continue.
-7. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
-8. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
+6. For normal inspection, call `pi_task_read(task_id)` to receive only the recent 50,000-character tail of the native Pi session. The plugin does not parse, summarize, classify, or rewrite it.
+7. Only when the user explicitly asks for the complete session, call `pi_task_read_full(task_id, cursor?, limit?)` for line-based full-session pages. After either read tool returns, end the current tool loop; do not immediately request another page unless the user explicitly needs it.
+8. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
+9. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
 The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again.
 
@@ -38,8 +39,9 @@ The plugin does not create semantic progress summaries or automatically pause a 
 - `pi_task_list()`: List all registered async Pi tasks for AstrBot to select.
 - `pi_task_status(task_id: string)`: Read AstrBot task control metadata without Pi event content.
 - `pi_task_poll(task_id: string)`: Explicitly request one short Pi state observation; return control metadata only.
-- `pi_task_read(task_id: string, cursor?: number, limit?: number)`: Read raw native Pi session JSONL lines after a zero-based line cursor. No semantic rewriting is performed.
-- `pi_task_result(task_id: string, offset?: number, limit?: number)`: Compatibility alias for `pi_task_read`; `offset` is the native session line cursor.
+- `pi_task_read(task_id: string)`: Read only the recent 50,000-character tail of the native Pi session. No semantic rewriting is performed.
+- `pi_task_read_full(task_id: string, cursor?: number, limit?: number)`: Explicitly read complete native Pi session lines by cursor when the user asks for full history.
+- `pi_task_result(task_id: string)`: Compatibility alias for the bounded recent-session reader.
 - `pi_task_follow_up(task_id: string, message: string)`: Send an explicit additional requirement to the existing Pi session.
 - `pi_task_resume(task_id: string)`: Resume an existing task/session without rebuilding its original context.
 - `pi_task_cancel(task_id: string)`: Cancel a task while retaining its durable history.
@@ -65,8 +67,9 @@ Read and write permissions are separate:
 - Pi runtime behavior is controlled by plugin settings: `pi_thinking_level`, `pi_context_window`, `pi_max_output_tokens`, `pi_input_modalities`, `pi_temperature`, `pi_top_p`, `pi_top_k`, `pi_min_p`, and `pi_sampling_params`.
 - The selected AstrBot Provider supplies only the OpenAI-compatible connection, credentials, Provider binding, and model identity. Its reasoning, context, output, modality, sampling, cost, and compatibility fields are not copied automatically.
 - Empty or zero numeric plugin settings are omitted so Pi uses its own defaults.
+- Every new async and legacy Pi session enables Pi's native automatic context compaction; this is a Pi runtime setting and does not cause AstrBot to summarize or rewrite the session.
 - The new task gets the current AstrBot persona, conversation, event, user message, and available media as a creation-time snapshot only.
-- `pi_task_read` reads the corresponding native Pi session JSONL directly. The plugin does not build a second content history, summarize errors, classify progress, or extract results from that session.
+- `pi_task_read` reads only the recent native session tail by default. `pi_task_read_full` is the explicit complete-session path. The plugin does not build a second content history, summarize errors, classify progress, or extract results from either path.
 - Follow-ups add only the explicit message supplied by AstrBot; they do not copy the caller's full AstrBot context.
 - AstrBot tools, MCP servers, Skills, and extensions are not inherited automatically. Only paths explicitly configured in `pi_skill_paths` and `pi_extension_paths` are passed to Pi. Pi built-in tools remain enabled.
 - Keep `pi_mcp_config_paths` empty because this bridge does not provide a native Pi MCP integration.

@@ -17,6 +17,9 @@ from .scheduler import TaskScheduler
 from .security import safe_error_summary
 
 
+RECENT_SESSION_CHARS = 50_000
+
+
 class PiTaskService:
     """Facade whose methods never wait for a Pi task to finish.
 
@@ -196,38 +199,71 @@ class PiTaskService:
             return self.error("task_status", safe_error_summary(exc), task_id=task_id)
 
     def result(
-        self, task_id: str, *, offset: int = 0, limit: int = 100
+        self, task_id: str, *, offset: int = -1, limit: int = 100
     ) -> dict[str, Any]:
-        """Compatibility alias for direct native Pi session reading."""
+        """Compatibility alias for the bounded native session reader."""
 
         result = self.read(task_id, cursor=offset, limit=limit)
         result["operation"] = "task_result"
         return result
 
     def read(
-        self, task_id: str, *, cursor: int = 0, limit: int = 100
+        self, task_id: str, *, cursor: int = -1, limit: int = 100
     ) -> dict[str, Any]:
-        """Return raw lines from the task's native Pi session JSONL file."""
+        """Read the recent native session tail without semantic processing."""
+
+        try:
+            if cursor < -1 or limit < 1:
+                raise ValueError("cursor must be -1 or non-negative and limit must be positive")
+            task = self.registry.get_task(task_id)
+            if cursor == -1:
+                text, start_byte, total_bytes = _read_session_tail(
+                    task.session_path, max_chars=RECENT_SESSION_CHARS
+                )
+                result = self.envelope("task_read", task_id)
+                result["session_text"] = text
+                result["progress"]["read"] = {
+                    "mode": "recent_tail",
+                    "max_chars": RECENT_SESSION_CHARS,
+                    "returned_chars": len(text),
+                    "start_byte": start_byte,
+                    "end_byte": total_bytes,
+                    "total_bytes": total_bytes,
+                    "has_more": start_byte > 0,
+                    "source": "pi_native_session_jsonl",
+                    "session_path": task.session_path,
+                }
+                return result
+            return self._read_full_page(task_id, cursor=cursor, limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            return self.error("task_read", safe_error_summary(exc), task_id=task_id)
+
+    def read_full(self, task_id: str, *, cursor: int = 0, limit: int = 100) -> dict[str, Any]:
+        """Read a page of complete native JSONL lines without a size cap."""
 
         try:
             if cursor < 0 or limit < 1:
                 raise ValueError("cursor must be non-negative and limit must be positive")
-            task = self.registry.get_task(task_id)
-            lines = _read_session_lines(task.session_path, cursor=cursor, limit=limit)
-            next_cursor = cursor + len(lines)
-            result = self.envelope("task_read", task_id)
-            result["session_lines"] = lines
-            result["progress"]["read"] = {
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "returned": len(lines),
-                "has_more": _session_has_more(task.session_path, next_cursor),
-                "source": "pi_native_session_jsonl",
-                "session_path": task.session_path,
-            }
-            return result
+            return self._read_full_page(task_id, cursor=cursor, limit=limit)
         except Exception as exc:  # noqa: BLE001
-            return self.error("task_read", safe_error_summary(exc), task_id=task_id)
+            return self.error("task_read_full", safe_error_summary(exc), task_id=task_id)
+
+    def _read_full_page(self, task_id: str, *, cursor: int, limit: int) -> dict[str, Any]:
+        task = self.registry.get_task(task_id)
+        lines = _read_session_lines(task.session_path, cursor=cursor, limit=limit)
+        next_cursor = cursor + len(lines)
+        result = self.envelope("task_read_full", task_id)
+        result["session_lines"] = lines
+        result["progress"]["read"] = {
+            "mode": "full_lines",
+            "cursor": cursor,
+            "next_cursor": next_cursor,
+            "returned": len(lines),
+            "has_more": _session_has_more(task.session_path, next_cursor),
+            "source": "pi_native_session_jsonl",
+            "session_path": task.session_path,
+        }
+        return result
 
     def list_tasks(self, owner_key: str | None = None) -> dict[str, Any]:
         try:
@@ -392,6 +428,25 @@ class PiTaskService:
             "sha256": item.sha256,
             "metadata": item.metadata,
         }
+
+
+def _read_session_tail(
+    session_path: str | None, *, max_chars: int
+) -> tuple[str, int, int]:
+    if not session_path:
+        return "", 0, 0
+    path = Path(session_path).expanduser()
+    if not path.is_file():
+        return "", 0, 0
+    total_bytes = path.stat().st_size
+    window_start = max(0, total_bytes - max_chars * 4)
+    with path.open("rb") as stream:
+        stream.seek(window_start)
+        raw = stream.read()
+    decoded = raw.decode("utf-8", errors="replace")
+    text = decoded[-max_chars:]
+    start_byte = total_bytes - len(text.encode("utf-8"))
+    return text, max(0, start_byte), total_bytes
 
 
 def _read_session_lines(

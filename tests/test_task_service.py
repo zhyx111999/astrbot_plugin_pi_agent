@@ -271,11 +271,16 @@ async def test_result_reads_native_pi_session_lines_by_cursor(tmp_path: Path):
     raw_line = '{"type":"message_update","delta":"' + ("x" * 5000) + '"}\n'
     session_path.write_bytes(raw_line.encode())
 
+    recent = service.read(task_id)
+    assert len(recent["session_text"]) <= 50_000
+    assert recent["progress"]["read"]["mode"] == "recent_tail"
+
     result = service.result(task_id, offset=0, limit=1)
 
     assert result["content"] == []
     assert result["session_lines"] == [raw_line]
     assert result["progress"]["read"] == {
+        "mode": "full_lines",
         "cursor": 0,
         "next_cursor": 1,
         "returned": 1,
@@ -313,7 +318,8 @@ async def test_provider_error_remains_in_native_session(tmp_path: Path):
 
     assert registry.get_task(task_id).status is TaskStatus.RUNNING
     assert result["error"] is None
-    assert result["session_lines"] == [raw_line]
+    assert result["session_text"] == raw_line
+    assert result["progress"]["read"]["mode"] == "recent_tail"
 
     await service.shutdown()
     await scheduler.shutdown()

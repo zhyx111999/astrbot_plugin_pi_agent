@@ -402,6 +402,9 @@ class TaskScheduler:
             )
             adapter = _call_supported(self.adapter_factory, adapter_kwargs)
             await adapter.start()
+            set_compaction = getattr(adapter, "set_auto_compaction", None)
+            if callable(set_compaction):
+                await set_compaction(True)
             set_thinking = getattr(adapter, "set_thinking_level", None)
             if callable(set_thinking):
                 await set_thinking(resolved_worker_config.thinking_level)
@@ -500,6 +503,9 @@ class TaskScheduler:
                 # cannot terminate a worker halfway through its handshake.
                 await adapter.start()
                 new_session = await adapter.new_session()
+                set_compaction = getattr(adapter, "set_auto_compaction", None)
+                if callable(set_compaction):
+                    await set_compaction(True)
                 set_thinking = getattr(adapter, "set_thinking_level", None)
                 if callable(set_thinking):
                     await set_thinking(resolved_worker_config.thinking_level)

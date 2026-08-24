@@ -1065,28 +1065,54 @@ class PiAgentPlugin(Star):
 
     @filter.llm_tool(name="pi_task_read")
     async def pi_task_read(
-        self, event: AstrMessageEvent, task_id: str, cursor: int = 0, limit: int = 100
+        self, event: AstrMessageEvent, task_id: str
     ) -> str:
-        """Read raw lines from the selected task's native Pi session JSONL.
+        """Read the recent tail of the selected task's native Pi session.
 
-        AstrBot receives the session data directly and decides how to parse it.
-        This read-only operation does not summarize, classify, or rewrite the
-        session and never injects the current caller's context.
+        The normal read returns at most 50,000 characters from the session
+        tail. It does not summarize, classify, or rewrite the session. Use
+        pi_task_read_full only when the user explicitly requests the full
+        session.
 
         After this tool returns, end the current AstrBot tool loop. Do not
         immediately call poll, status, result, or read again in the same turn.
 
         Args:
             task_id(string): Task id returned by pi_agent
-            cursor(number): Zero-based session line cursor to continue from
-            limit(number): Maximum native session lines to return
         """
         operation = "task_read"
         if denied := self._require_task_permission(event):
             return self._bridge_error(operation, denied, task_id=task_id)
         try:
             service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(service.read(task_id, cursor=cursor, limit=limit))
+            return self._bridge_dump(service.read(task_id))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
+
+    @filter.llm_tool(name="pi_task_read_full")
+    async def pi_task_read_full(
+        self, event: AstrMessageEvent, task_id: str, cursor: int = 0, limit: int = 100
+    ) -> str:
+        """Read complete native Pi session JSONL lines when explicitly requested.
+
+        Normal inspection should use pi_task_read, which returns only the
+        recent 50,000-character tail. Use this tool only when the user asks
+        to inspect the complete session. End the current tool loop after it
+        returns and continue with a later page only when necessary.
+
+        Args:
+            task_id(string): Task id returned by pi_agent
+            cursor(number): Zero-based native session line cursor
+            limit(number): Maximum complete session lines to return
+        """
+        operation = "task_read_full"
+        if denied := self._require_task_permission(event):
+            return self._bridge_error(operation, denied, task_id=task_id)
+        try:
+            service = await self._service_for_task(event, task_id)
+            return self._bridge_dump(
+                service.read_full(task_id, cursor=cursor, limit=limit)
+            )
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
 

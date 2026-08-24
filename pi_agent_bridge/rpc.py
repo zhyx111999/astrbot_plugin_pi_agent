@@ -690,6 +690,13 @@ class PiRpcAdapter:
             {"type": "switch_session", "sessionPath": os.fspath(session_path)}
         )
 
+    async def set_auto_compaction(self, enabled: bool = True) -> dict[str, Any]:
+        """Enable Pi's native automatic context compaction."""
+
+        return await self._send_and_wait(
+            {"type": "set_auto_compaction", "enabled": bool(enabled)}
+        )
+
     async def set_thinking_level(self, level: str) -> dict[str, Any]:
         """Set Pi's explicit reasoning level for the current session."""
 
