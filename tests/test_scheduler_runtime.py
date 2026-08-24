@@ -24,6 +24,7 @@ class FakeWorker:
     created: list["FakeWorker"] = []
 
     def __init__(self, **kwargs):
+        self.kwargs = kwargs
         self.task_id = kwargs["task_id"]
         self.executable = kwargs["executable"]
         self.is_running = False
@@ -84,6 +85,9 @@ async def test_runtime_resolution_is_lazy_and_passed_as_argv(tmp_path: Path):
     assert FakeWorker.created[0].executable == (
         "/plugin/node",
         "/plugin/pi-cli.js",
+    )
+    assert FakeWorker.created[0].kwargs["session_dir"] == str(
+        (tmp_path / "sessions" / task.task_id).resolve()
     )
     assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
 

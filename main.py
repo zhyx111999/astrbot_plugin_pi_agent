@@ -142,6 +142,8 @@ class PiAgentPlugin(Star):
             await self.pi_task_service.shutdown()
             self.pi_task_service = None
         if self.pi_task_scheduler is not None:
+            # Stop task-owned children cleanly. Startup recovery resumes each
+            # nonterminal native session, avoiding a stale stdio transport.
             await self.pi_task_scheduler.shutdown()
             self.pi_task_scheduler = None
         if self._task_registry is not None:
@@ -1128,8 +1130,9 @@ class PiAgentPlugin(Star):
 
     @filter.llm_tool(name="pi_task_poll")
     async def pi_task_poll(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Ask Pi for one short state observation without returning Pi content.
+        """Observe Pi state and return a bounded raw native-session tail.
 
+        The tail is returned unchanged and is not summarized or interpreted.
         AstrBot explicitly triggers this read-only check. It does not inject
         the current caller's context into the existing Pi session.
 

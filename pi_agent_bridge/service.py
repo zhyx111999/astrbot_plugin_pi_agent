@@ -18,6 +18,7 @@ from .security import safe_error_summary
 
 
 RECENT_SESSION_CHARS = 50_000
+POLL_SESSION_CHARS = 8_000
 
 
 class PiTaskService:
@@ -172,11 +173,29 @@ class PiTaskService:
         await self.shutdown()
 
     async def poll(self, task_id: str) -> dict[str, Any]:
-        """Ask Pi for one bounded state observation without returning its output."""
+        """Observe state and return a bounded raw native-session progress tail."""
 
         try:
             await self.scheduler.poll_task(task_id)
-            return self.envelope("task_poll", task_id)
+            task = self.registry.get_task(task_id)
+            result = self.envelope("task_poll", task_id)
+            text, start_byte, total_bytes = _read_session_tail(
+                task.session_path,
+                max_chars=POLL_SESSION_CHARS,
+            )
+            result["progress"]["read"] = {
+                "mode": "poll_recent_tail",
+                "max_chars": POLL_SESSION_CHARS,
+                "returned_chars": len(text),
+                "start_byte": start_byte,
+                "end_byte": total_bytes,
+                "total_bytes": total_bytes,
+                "has_more": start_byte > 0,
+                "source": "pi_native_session_jsonl",
+                "session_path": task.session_path,
+            }
+            result["progress"]["session_tail"] = text
+            return result
         except Exception as exc:  # noqa: BLE001
             return self.error("task_poll", safe_error_summary(exc), task_id=task_id)
 

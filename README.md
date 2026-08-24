@@ -93,9 +93,9 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
 | `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |
 
-异步任务的 worker 生命周期错误会使任务转为 `failed`；Provider 具体错误仍保留在 Pi 原生 session 中，由 AstrBot 通过 `pi_task_read` 自己读取和判断。legacy `pi_open_session` 与 `pi_agent` 使用不同 ID，但 `pi_session_inspect` 和 `pi_session_delete` 现在都可按对应类型处理。legacy 会话创建后即使 Pi 尚未落盘 JSONL，也能在当前插件进程中被列出、检查和删除。
+异步任务的 worker 生命周期错误会使任务转为 `failed`；AstrBot 或插件重载后，未终态任务会从 native session 自动重启并继续，不再因为旧 stdio worker 消失而直接变成 orphaned；Provider 具体错误仍保留在 Pi 原生 session 中，由 AstrBot 通过 `pi_task_read` 自己读取和判断。legacy `pi_open_session` 与 `pi_agent` 使用不同 ID，但 `pi_session_inspect` 和 `pi_session_delete` 现在都可按对应类型处理。legacy 会话创建后即使 Pi 尚未落盘 JSONL，也能在当前插件进程中被列出、检查和删除。
 
-`pi_task_status` 只返回 AstrBot 任务和 native session 元数据，不返回会话内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限 worker 状态检查，也不返回会话内容。普通查看调用 `pi_task_read(task_id)`，只返回对应 Pi 原生 JSONL session 最近 50,000 个字符的尾部，不做摘要、改写、分类、错误提炼或结果判断。用户明确要求完整会话时，使用 `pi_task_read_full(task_id, cursor?, limit?)` 按原生 JSONL 行分页读取；`pi_task_result` 仅作为最近内容兼容别名。
+`pi_task_status` 只返回 AstrBot 任务和 native session 元数据，不返回会话内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限 worker 状态检查，并返回最近 8,000 个字符的 native session raw tail，不做摘要、改写、分类、错误提炼或结果判断。普通查看调用 `pi_task_read(task_id)`，返回对应 Pi 原生 JSONL session 最近 50,000 个字符的尾部。用户明确要求完整会话时，使用 `pi_task_read_full(task_id, cursor?, limit?)` 按原生 JSONL 行分页读取；`pi_task_result` 仅作为最近内容兼容别名。
 
 Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 
@@ -115,7 +115,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 | `pi_task_read(task_id)` | 普通查看入口，直接读取对应 Pi 原生 session JSONL 最近 50,000 个字符尾部，不做内容处理。 |
 | `pi_task_read_full(task_id, cursor?, limit?)` | 用户明确要求时按原生 session JSONL 行分页读取完整会话。 |
 | `pi_task_result(task_id)` | `pi_task_read` 的兼容别名，返回最近会话内容。 |
-| `pi_task_poll(task_id)` | 由 AstrBot 主动请求一次短 Pi 状态检查；只返回控制元数据，不返回 Pi 内容。 |
+| `pi_task_poll(task_id)` | 由 AstrBot 主动请求一次短 Pi 状态检查，并返回最近 8,000 字符的 native session raw tail；不做解释。 |
 | `pi_task_follow_up(task_id, message)` | owner 或管理员使用 Pi steer 向活动任务追加要求。 |
 | `pi_task_resume(task_id)` | owner 或管理员恢复可恢复任务。 |
 | `pi_task_cancel(task_id)` | owner 或管理员取消 worker，但保留任务历史。 |
@@ -127,7 +127,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 | `pi_legacy_output_next()` | 获取被截断的旧版 Pi 命令输出下一页。 |
 | `pi_artifact_inspect(task_id)` | 兼容读取旧任务 artifact 元数据；新任务不自动扫描或登记 workspace 内容。 |
 
-所有异步控制工具都返回 JSON envelope。`status/poll` 的 envelope 不包含 Pi session 内容；`read/result` 额外返回 native session JSONL 原始行。成功和失败都交给主模型二次加工：
+所有异步控制工具都返回 JSON envelope。`status` 只返回控制元数据；`poll` 额外返回有界 native session raw tail；`read/result` 额外返回 native session JSONL 原始行。成功和失败都交给主模型二次加工：
 
 ```json
 {

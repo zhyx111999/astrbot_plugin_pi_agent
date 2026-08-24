@@ -158,7 +158,7 @@ def test_registry_migrates_and_persists_session_path(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_restart_marks_dead_worker_orphaned_with_structured_snapshot(tmp_path: Path):
+async def test_restart_resumes_dead_worker_from_native_session(tmp_path: Path):
     registry = TaskRegistry(tmp_path / "tasks.db")
     session = tmp_path / "session.jsonl"
     session.write_text('{"type":"session","id":"sid"}\n', encoding="utf-8")
@@ -179,13 +179,14 @@ async def test_restart_marks_dead_worker_orphaned_with_structured_snapshot(tmp_p
     )
 
     await scheduler.start()
-    orphaned = registry.get_task(task.task_id)
+    resumed = registry.get_task(task.task_id)
     snapshot = registry.get_latest_snapshot(task.task_id)
     assert snapshot is None
-    assert orphaned.status is TaskStatus.ORPHANED
-    assert orphaned.process_id is None
+    assert resumed.status is TaskStatus.RUNNING
+    assert resumed.process_id == 42001
     assert registry.get_latest_snapshot(task.task_id) is None
     assert factory.takeover_calls == []
+    assert factory.created[-1].steer_messages
 
     await scheduler.shutdown()
     registry.close()

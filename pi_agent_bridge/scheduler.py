@@ -303,8 +303,31 @@ class TaskScheduler:
             return recovered
 
     async def _recover_task(self, task: TaskRecord) -> PiRpcAdapter | None:
+        """Recover interrupted nonterminal work from its native session.
+
+        Pi RPC uses stdio and cannot be adopted by PID. If the old child is
+        gone, start a fresh worker on the same native session and explicitly
+        continue the pending work. A still-live child without a reconnectable
+        transport remains orphaned: launching a second writer would be unsafe.
+        """
+
         if task.process_id is None or not self.process_probe(task.process_id):
-            orphaned = self._mark_orphaned(task.task_id, "Pi worker is no longer alive after restart")
+            adapter = await self._restart_from_session(task)
+            if adapter is not None:
+                try:
+                    await adapter.steer(
+                        "The previous worker ended before this task reached a "
+                        "terminal state. Resume the existing task from this "
+                        "native session and complete it."
+                    )
+                    return adapter
+                except Exception:  # noqa: BLE001
+                    self._adapters.pop(task.task_id, None)
+                    await _terminate_quietly(adapter)
+            orphaned = self._mark_orphaned(
+                task.task_id,
+                "Pi worker ended and its native session could not be resumed",
+            )
             if orphaned is not None:
                 await self._notify_terminal_task(orphaned, reason="worker_orphaned")
             return None
@@ -500,6 +523,7 @@ class TaskScheduler:
                 **{
                     "task_id": task.task_id,
                     "executable": self.resolve_executable(),
+                    "session_dir": str(session_dir),
                     "name": f"astrbot-{task.task_id[:8]}",
                     "command_timeout": self.command_timeout,
                 },
@@ -634,8 +658,11 @@ class TaskScheduler:
         agent_finished = any(
             getattr(event, "type", None) == "agent_end" for event in events
         )
-        if not adapter.is_running and returncode not in {None, 0}:
-            updated = self.registry.transition_status(task_id, TaskStatus.FAILED)
+        if not adapter.is_running:
+            if returncode == 0:
+                updated = self.registry.transition_status(task_id, TaskStatus.COMPLETED)
+            elif returncode is not None:
+                updated = self.registry.transition_status(task_id, TaskStatus.FAILED)
         elif agent_finished and updated.status in _ACTIVE_STATUSES:
             updated = self.registry.transition_status(task_id, TaskStatus.COMPLETED)
         if updated.status in _TERMINAL_STATUSES:

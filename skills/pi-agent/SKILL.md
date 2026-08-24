@@ -29,20 +29,20 @@ Terminal wakeups are submitted through AstrBot's public event factory into the o
 2. Continue the current AstrBot conversation; after `pi_agent` returns, end the current tool loop immediately. Do not poll or read the task in the same turn.
 3. When a later user turn requires Pi information, call `pi_task_list` or the known task tool. After each list/status/poll/read call, end the current tool loop; never chain polling calls in one turn.
 4. Call `pi_task_status` for control metadata without Pi content.
-5. Call `pi_task_poll` when AstrBot explicitly needs one short Pi state observation. It returns control metadata only and does not return Pi events.
+5. Call `pi_task_poll` when AstrBot explicitly needs one short Pi state observation. It returns control metadata plus an unchanged native-session tail capped at 8,000 characters; it does not summarize or interpret Pi events.
 6. For normal inspection, call `pi_task_read(task_id)` to receive only the recent 50,000-character tail of the native Pi session. The plugin does not parse, summarize, classify, or rewrite it.
 7. Only when the user explicitly asks for the complete session, call `pi_task_read_full(task_id, cursor?, limit?)` for line-based full-session pages. After either read tool returns, end the current tool loop; do not immediately request another page unless the user explicitly needs it.
 8. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
 9. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
-The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again. Terminal wakeups are only for completed, failed, cancelled, and orphaned states.
+The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again. If AstrBot or the plugin reloads, an unfinished task is restarted from its native session and explicitly continued when the old worker is no longer alive. Terminal wakeups are only for completed, failed, cancelled, and orphaned states.
 
 ## Async Task Tools
 
 - `pi_agent(prompt: string, workspace?: string)`: Create a new isolated Pi task and return immediately.
 - `pi_task_list()`: List all registered async Pi tasks for AstrBot to select.
 - `pi_task_status(task_id: string)`: Read AstrBot task control metadata without Pi event content.
-- `pi_task_poll(task_id: string)`: Explicitly request one short Pi state observation; return control metadata only.
+- `pi_task_poll(task_id: string)`: Explicitly request one short Pi state observation and receive an unchanged native-session tail capped at 8,000 characters.
 - `pi_task_read(task_id: string)`: Read only the recent 50,000-character tail of the native Pi session. No semantic rewriting is performed.
 - `pi_task_read_full(task_id: string, cursor?: number, limit?: number)`: Explicitly read complete native Pi session lines by cursor when the user asks for full history.
 - `pi_task_result(task_id: string)`: Compatibility alias for the bounded recent-session reader.
@@ -80,7 +80,7 @@ Read and write permissions are separate:
 
 ## Silent Worker Boundary
 
-Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer never wakes the main model and never sends completion, failure, progress, or idle notifications. `status` and `poll` expose only task-control metadata; `read` is the explicit native-session channel.
+Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer never wakes the main model and never sends completion, failure, progress, or idle notifications. `status` exposes task-control metadata; `poll` exposes a bounded raw session tail; `read` is the explicit larger native-session channel. A clean worker exit is converged to `completed`; a nonzero worker exit is `failed`.
 
 ## Legacy Synchronous Route
 

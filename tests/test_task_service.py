@@ -25,6 +25,7 @@ class FakeAdapter:
         self.terminated = False
         self.steer_messages: list[str] = []
         self.cancelled = False
+        self.returncode = None
         self.state_calls = 0
         self.session_path = str(Path(kwargs.get("session_dir", "/tmp")) / "session.jsonl")
         self.__class__.instances.append(self)
@@ -69,6 +70,7 @@ class FakeAdapter:
     async def terminate(self):
         self.terminated = True
         self.is_running = False
+        self.returncode = 0
 
 
 class BlockingScheduler:
@@ -139,6 +141,36 @@ async def test_create_returns_before_worker_and_repeated_observations_stay_runni
 
 
 @pytest.mark.asyncio
+async def test_clean_worker_exit_converges_to_completed(tmp_path: Path):
+    FakeAdapter.instances.clear()
+    registry = TaskRegistry(tmp_path / "tasks.db")
+    scheduler = TaskScheduler(
+        registry,
+        workspace_root=tmp_path / "workspaces",
+        adapter_factory=FakeAdapter,
+        poll_interval_seconds=3600,
+    )
+    service = PiTaskService(registry, scheduler)
+
+    created = await service.create_task(owner_key="qq:1", task="exit cleanly")
+    task_id = created["task_id"]
+    await asyncio.sleep(0)
+    adapter = FakeAdapter.instances[0]
+    adapter.is_running = False
+    adapter.returncode = 0
+
+    result = await service.poll(task_id)
+
+    assert result["status"] == TaskStatus.COMPLETED.value
+    assert registry.get_task(task_id).status is TaskStatus.COMPLETED
+    assert adapter.terminated is True
+
+    await service.shutdown()
+    await scheduler.shutdown()
+    registry.close()
+
+
+@pytest.mark.asyncio
 async def test_poll_records_a_bounded_remote_pi_state_snapshot(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
@@ -187,6 +219,8 @@ async def test_main_model_poll_explicitly_checks_worker_without_returning_events
     assert registry.get_latest_snapshot(task_id) == snapshot_before
     assert registry.get_task(task_id).event_cursor == "0"
     assert result["content"] == []
+    assert result["progress"]["session_tail"] == ""
+    assert result["progress"]["read"]["mode"] == "poll_recent_tail"
 
     await service.shutdown()
     await scheduler.shutdown()
