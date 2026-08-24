@@ -1,6 +1,6 @@
 # astrbot_plugin_pi_agent
 
-一个独立维护的 AGPL-3.0 AstrBot 插件，将本地 [Pi](https://github.com/earendil-works/pi) 作为长任务 worker 接入 AstrBot。Pi 作为 AstrBot 的通用 Agent 执行器，适合处理代码、脚本、研究、自动化、文件操作、工具驱动流程以及其他长期、多步骤任务；AstrBot 负责分配、检查、读取和管理。
+一个由 **Yezi 和 Cz** 独立维护的 AGPL-3.0 AstrBot 插件，将本地 [Pi](https://github.com/earendil-works/pi) 作为长任务 worker 接入 AstrBot。Pi 作为 AstrBot 的通用 Agent 执行器，适合处理代码、脚本、研究、自动化、文件操作、工具驱动流程以及其他长期、多步骤任务；AstrBot 负责分配、检查、读取和管理。
 
 它解决的是 AstrBot Agent 会话不适合长时间占用的问题：主模型调用 `pi_agent` 后立即拿到 `task_id`，Pi 在独立进程和独立 session 中继续工作；主模型可以在后续回合通过任务工具读取对应的 native session，同时正常处理当前会话的其他消息。
 
@@ -46,25 +46,83 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - Pi native session 自动压缩：异步和 legacy 新会话都会启用 Pi 官方 `set_auto_compaction`，避免长期上下文无限膨胀。
 - Pi 终态唤醒：任务完成、失败、取消或失联时，插件通过 AstrBot 公开事件入口把终态通知重新提交到原会话普通 pipeline；插件不直接发送 Pi 内容。
 
-## 环境要求
+## 依赖与环境要求
 
-- AstrBot 4.x 或更高版本。
-- Linux/WSL x64 是首版固定部署目标；runtime adapter 同时处理 Windows/WSL 路径。
-- 首选插件随发行版附带的 Node `22.19.0` 与 Pi `0.84.2` runtime。源码 Git 仓库不提交 Node/Pi 二进制；未安装 runtime release asset 时，必须自行安装 Pi CLI 并确保 `pi` 在 AstrBot 进程的 `PATH` 中。
-- 选择一个 AstrBot provider 并配置可用密钥。首版只接受 OpenAI-compatible provider。
+运行时依赖：
+
+- AstrBot `4.27.1` 或兼容的 `4.x` 版本，推荐使用 `4.27.1`。
+- Pi CLI `0.84.2`。
+- Node.js `22.19.0`，用于运行 Pi CLI。
+- 一个可用的 AstrBot OpenAI-compatible Provider/model binding。
+- Linux/WSL x64 是当前主要部署目标；插件也处理 Windows/WSL 路径格式。
+- AstrBot 自身的 Python 运行环境和网络访问能力。
+
+插件不修改 Pi 或 AstrBot 官方源码，也不内置或提交 Node/Pi 二进制。Pi CLI 必须由部署环境安装，并确保 AstrBot 服务进程能够执行 `pi --version`。MCP、AstrBot 工具自动继承和非 OpenAI-compatible Provider 不属于当前支持范围。
 
 后台 Pi 使用 `pi_model` 选择的 AstrBot Provider/model 作为模型绑定，但不会自动继承该 Provider 的上下文、推理、输出、模态、采样、成本或兼容字段。Pi 的运行参数全部由以下插件配置项明确控制：`pi_thinking_level`、`pi_context_window`、`pi_max_output_tokens`、`pi_input_modalities`、`pi_temperature`、`pi_top_p`、`pi_top_k`、`pi_min_p` 和 `pi_sampling_params`。填写 0 或留空的数值字段不写入 Pi 配置，由 Pi 使用默认值；Provider 只提供 OpenAI-compatible 连接地址、鉴权和已选模型绑定。
 
-## 安装
+## 部署指南
+
+### 1. 安装 Pi 运行时
+
+先按照 Pi 官方安装方式安装 Node.js `22.19.0` 和 Pi `0.84.2`，然后在 AstrBot 实际运行用户下验证：
+
+```bash
+node --version
+pi --version
+```
+
+如果 AstrBot 通过 systemd 或 WSL 启动，要在同一个服务环境中验证，而不是只在交互式终端验证。
+
+### 2. 安装插件
 
 ```bash
 cd /path/to/astrbot/data/plugins
 git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plugin_pi_agent
 ```
 
-随后二选一准备运行时：安装本项目对应版本的 runtime release asset，或按照 Pi 官方安装方式安装 Pi CLI 并确认 AstrBot 进程可执行 `pi --version`。重启 AstrBot 或重新加载插件。首次使用异步任务时，插件会在自己的状态目录创建 SQLite WAL registry、native sessions、workspaces 和任务元数据。
+也可以下载 GitHub Release 压缩包，解压到：
 
-## 配置
+```text
+AstrBot/data/plugins/astrbot_plugin_pi_agent
+```
+
+目录必须直接包含 `main.py`、`metadata.yaml` 和 `_conf_schema.json`，不要再套一层同名目录。
+
+### 3. 配置并重启
+
+在 AstrBot WebUI 中重新加载插件，选择可用的 Provider/model，填写 `pi_model`，然后按下方配置指南设置参数。至少需要：
+
+```text
+enable_async_tasks = true
+pi_model = AstrBot 中已配置的 Provider/model
+pi_thinking_level = max
+```
+
+配置完成后重启 AstrBot：
+
+```bash
+systemctl --user restart astrbot.service
+systemctl --user is-active astrbot.service
+```
+
+首次创建异步任务时，插件会在自己的状态目录创建 SQLite WAL registry、task-owned native sessions、workspaces 和 agent 配置目录。建议先用短任务验证 `completed`、`pi_task_poll`、`pi_task_read` 和文件产物读取。
+
+### 4. 升级
+
+升级前不需要删除任务状态目录。替换插件源码并重启 AstrBot 后，未终态任务会从 native session 自动恢复；不要同时启动两个插件副本，也不要手动复制 task-owned session 文件。
+
+## 配置指南
+
+插件配置由 AstrBot WebUI 根据 `_conf_schema.json` 生成，通常不需要手动编辑 JSON。建议按以下顺序配置：
+
+1. `enable_async_tasks` 保持 `true`，启用独立后台任务桥。
+2. `pi_model` 选择 AstrBot 已配置且有余额/权限的 Provider/model。
+3. `pi_thinking_level` 默认使用 `max`；用户可以改为 Pi 支持的其他档位。
+4. 根据模型能力设置上下文、输出 token、模态和采样参数；填 `0` 的数值字段会被省略。
+5. `pi_skill_paths` 和 `pi_extension_paths` 只填写确实存在的绝对路径。
+6. `pi_mcp_config_paths` 当前必须保持为空。
+7. 修改配置后重启 AstrBot，新的运行参数只影响新创建的 Pi worker。
 
 配置文件为 `_conf_schema.json`，常用项如下：
 
@@ -173,7 +231,16 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 
 ## 恢复、保留和删除
 
-AstrBot 重启时会尝试重新接管仍存活的 worker。标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，不会重复启动第二个写入进程；只有显式 `pi_task_resume` 或 `pi_session_resume` 才会从 session 文件恢复。删除操作会取消任务、删除 registry 元数据，并按任务资源策略清理受插件管理的 native session、工作区和 agent 配置目录。插件不需要为新任务清理复制的事件 snapshot 或自动登记的 artifact。
+AstrBot 或插件重启时会恢复未终态任务：旧 worker 已退出时，插件从 native session 启动新 worker 并继续执行；旧 worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，避免重复启动第二个写入进程，此时使用 `pi_task_resume` 或 `pi_session_resume` 显式恢复。删除操作会取消任务、删除 registry 元数据，并按任务资源策略清理受插件管理的 native session、工作区和 agent 配置目录。插件不需要为新任务清理复制的事件 snapshot 或自动登记的 artifact。
+
+## 作者与项目
+
+- 作者：Yezi、Cz
+- 项目类型：独立维护的开源 AstrBot 插件
+- 许可证：AGPL-3.0
+- 个人维护仓库：https://github.com/zhyx111999/astrbot_plugin_pi_agent
+- 官方 Pi 项目：https://github.com/earendil-works/pi
+- 官方 AstrBot 项目：https://github.com/AstrBotDevs/AstrBot
 
 ## 开发与验证
 

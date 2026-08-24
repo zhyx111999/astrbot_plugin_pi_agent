@@ -28,18 +28,6 @@ class _Member:
         self.nickname = nickname
 
 
-class _Session:
-    message_type = types.SimpleNamespace(value="GroupMessage")
-    session_id = "group-123"
-    platform_id = "snowluma"
-
-    @staticmethod
-    def from_str(value: str) -> "_Session":
-        if value != "snowluma:GroupMessage:group-123":
-            raise ValueError(value)
-        return _Session()
-
-
 @pytest.mark.asyncio
 async def test_terminal_wakeup_enters_normal_event_queue(monkeypatch):
     calls: list[tuple[str, dict]] = []
@@ -60,13 +48,10 @@ async def test_terminal_wakeup_enters_normal_event_queue(monkeypatch):
     platform.MessageMember = _Member
     star = types.ModuleType("astrbot.api.star")
     star.StarTools = StarTools
-    session_module = types.ModuleType("astrbot.core.platform.message_session")
-    session_module.MessageSession = _Session
     for name, module in {
         "astrbot.api.message_components": message_components,
         "astrbot.api.platform": platform,
         "astrbot.api.star": star,
-        "astrbot.core.platform.message_session": session_module,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
 
@@ -94,14 +79,6 @@ async def test_terminal_wakeup_enters_normal_event_queue(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_terminal_wakeup_rejects_invalid_session(monkeypatch):
-    session_module = types.ModuleType("astrbot.core.platform.message_session")
-
-    class MessageSession:
-        @staticmethod
-        def from_str(_value: str):
-            raise ValueError("bad session")
-
-    session_module.MessageSession = MessageSession
     message_components = types.ModuleType("astrbot.api.message_components")
     message_components.Plain = _Plain
     platform = types.ModuleType("astrbot.api.platform")
@@ -112,7 +89,6 @@ async def test_terminal_wakeup_rejects_invalid_session(monkeypatch):
         "astrbot.api.message_components": message_components,
         "astrbot.api.platform": platform,
         "astrbot.api.star": star,
-        "astrbot.core.platform.message_session": session_module,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
 

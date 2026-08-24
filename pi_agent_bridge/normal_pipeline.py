@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 
 class NormalPipelineRelayError(RuntimeError):
     """The host cannot enqueue a synthetic normal-pipeline event."""
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionOrigin:
+    platform_id: str
+    message_type: str
+    session_id: str
+
+
+def _parse_session_origin(value: str) -> _SessionOrigin:
+    parts = value.split(":", 2)
+    if len(parts) != 3 or not all(part.strip() for part in parts):
+        raise NormalPipelineRelayError(f"invalid task session origin: {value}")
+    return _SessionOrigin(*(part.strip() for part in parts))
 
 
 async def enqueue_terminal_wakeup(
@@ -17,10 +32,10 @@ async def enqueue_terminal_wakeup(
 ) -> None:
     """Submit a terminal wake message to AstrBot's normal event queue.
 
-    This uses AstrBot's public StarTools event factory instead of sending a
-    message directly. The resulting wake event is processed by the regular
-    preprocess/agent/respond pipeline, while the Pi session itself remains
-    available only through the plugin's LLM tools.
+    The relay uses only AstrBot's public StarTools and platform APIs. The
+    resulting wake event is processed by the regular preprocess/agent/respond
+    pipeline, while the Pi session remains available only through the plugin's
+    LLM tools.
     """
 
     del context
@@ -28,19 +43,12 @@ async def enqueue_terminal_wakeup(
         from astrbot.api.message_components import Plain
         from astrbot.api.platform import MessageMember
         from astrbot.api.star import StarTools
-        from astrbot.core.platform.message_session import MessageSession
     except (ImportError, ModuleNotFoundError) as exc:
         raise NormalPipelineRelayError(
             "AstrBot public normal-pipeline event APIs are unavailable"
         ) from exc
 
-    try:
-        session = MessageSession.from_str(session_origin)
-    except Exception as exc:  # noqa: BLE001
-        raise NormalPipelineRelayError(
-            f"invalid task session origin: {session_origin}"
-        ) from exc
-
+    session = _parse_session_origin(session_origin)
     if not callable(getattr(StarTools, "create_message", None)) or not callable(
         getattr(StarTools, "create_event", None)
     ):
@@ -49,7 +57,7 @@ async def enqueue_terminal_wakeup(
         )
 
     message_obj = await StarTools.create_message(
-        type=session.message_type.value,
+        type=session.message_type,
         self_id="astrbot",
         session_id=session.session_id,
         sender=MessageMember(
@@ -64,7 +72,7 @@ async def enqueue_terminal_wakeup(
         },
         group_id=(
             session.session_id
-            if session.message_type.value == "GroupMessage"
+            if session.message_type == "GroupMessage"
             else ""
         ),
     )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import inspect
 import uuid
 from pathlib import Path
 from collections.abc import Mapping
@@ -47,10 +46,7 @@ class PiTaskService:
         owner_key: str,
         task: str,
         context: Mapping[str, Any] | None = None,
-        persona: str | None = None,
-        media_references: list[str] | None = None,
         workspace: str | None = None,
-        prepare_context: Any | None = None,
     ) -> dict[str, Any]:
         """Create a task and return before Pi performs any agent work."""
 
@@ -67,19 +63,6 @@ class PiTaskService:
             task_id = str(uuid.uuid4())
             normalized_workspace = self.scheduler.workspace_for(task_id, workspace)
             prepared_context = dict(context or {})
-            prepared_persona = persona
-            prepared_media = list(media_references or [])
-            if callable(prepare_context):
-                prepared = prepare_context(task_id, normalized_workspace)
-                if inspect.isawaitable(prepared):
-                    prepared = await prepared
-                if isinstance(prepared, Mapping):
-                    prepared_context.update(dict(prepared))
-                    if isinstance(prepared.get("persona"), str):
-                        prepared_persona = prepared["persona"]
-                    refs = prepared.get("media_references")
-                    if isinstance(refs, list | tuple):
-                        prepared_media = [str(item) for item in refs if str(item)]
             self.registry.create_task(
                 owner_key=owner_key.strip(),
                 prompt=task.strip(),
@@ -87,12 +70,7 @@ class PiTaskService:
                 workspace=str(normalized_workspace),
                 task_id=task_id,
             )
-            prompt = build_pi_prompt(
-                task,
-                context_snapshot=prepared_context,
-                persona=prepared_persona,
-                media_references=prepared_media,
-            )
+            prompt = build_pi_prompt(task)
             launch = asyncio.create_task(
                 self._launch(task_id, prompt),
                 name=f"pi-task-launch-{task_id}",

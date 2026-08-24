@@ -32,7 +32,6 @@ from .runtime import (
     PiRuntimeVersionError,
 )
 from .tools import ToolRegistry
-from .wakeup import WakeupAdapter
 from .context import build_pi_prompt, event_owner_key
 from .worker import (
     WORKER_DESCRIPTOR_KEY,
@@ -71,7 +70,6 @@ __all__ = [
     "PiRuntimeUnavailable",
     "PiRuntimeVersionError",
     "ToolRegistry",
-    "WakeupAdapter",
     "build_pi_prompt",
     "event_owner_key",
     "UnsupportedAstrBotCapability",

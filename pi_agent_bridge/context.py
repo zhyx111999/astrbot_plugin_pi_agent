@@ -19,16 +19,9 @@ def event_owner_key(event: Any) -> str:
     return f"{platform}:{group_id}:{sender_id}"
 
 
-def build_pi_prompt(
-    task: str,
-    *,
-    context_snapshot: Any | None = None,
-    persona: Any | None = None,
-    media_references: Any | None = None,
-) -> str:
+def build_pi_prompt(task: str) -> str:
     """Build a Pi prompt from only the main model's refined task request."""
 
-    del context_snapshot, persona, media_references
     return (
         "You are a delegated Agent worker. Execute the assigned request in the "
         "current workspace. Do not assume later chat messages unless AstrBot "

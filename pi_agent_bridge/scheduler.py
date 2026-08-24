@@ -398,7 +398,7 @@ class TaskScheduler:
         *,
         worker_config: PiWorkerConfig | None = None,
     ) -> PiRpcAdapter | None:
-        """Start a new isolated worker only after an explicit user resume."""
+        """Start an isolated worker from an existing native session."""
 
         if task.process_id is not None and self.process_probe(task.process_id):
             raise PiRpcError(
