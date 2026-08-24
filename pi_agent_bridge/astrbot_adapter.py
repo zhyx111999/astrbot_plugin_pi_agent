@@ -129,9 +129,9 @@ class AstrBotAdapter:
     def supports_main_agent_wakeup(self) -> bool:
         """Whether the caller supplied an explicit wake callback.
 
-        AstrBot's ``CronMessageEvent`` path is internal, so the default is
-        false. A host integration may inject a version-specific callback and
-        keep that dependency outside this adapter.
+        Native active-agent wakeup is internal. Current terminal wakeups use
+        the public StarTools normal-event relay; this optional callback remains
+        only for separately maintained host integrations.
         """
         return self._wake_main_agent is not None
 
