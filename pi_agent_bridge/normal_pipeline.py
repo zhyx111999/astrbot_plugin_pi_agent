@@ -24,6 +24,30 @@ def _parse_session_origin(value: str) -> _SessionOrigin:
     return _SessionOrigin(*(part.strip() for part in parts))
 
 
+def _group_wake_prefix(context: Any, session_origin: str) -> str:
+    """Read one configured group wake prefix without requiring host internals."""
+
+    getter = getattr(context, "get_config", None)
+    if not callable(getter):
+        return ""
+    try:
+        config = getter(session_origin)
+    except Exception:  # noqa: BLE001
+        return ""
+    if not isinstance(config, dict):
+        return ""
+    prefixes = config.get("wake_prefix", [])
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    if not isinstance(prefixes, (list, tuple)):
+        return ""
+    for prefix in prefixes:
+        value = str(prefix).strip()
+        if value:
+            return value
+    return ""
+
+
 async def enqueue_terminal_wakeup(
     *,
     context: Any,
@@ -38,7 +62,6 @@ async def enqueue_terminal_wakeup(
     LLM tools.
     """
 
-    del context
     try:
         from astrbot.api.message_components import Plain
         from astrbot.api.platform import MessageMember
@@ -56,6 +79,12 @@ async def enqueue_terminal_wakeup(
             "AstrBot StarTools.create_message/create_event is unavailable"
         )
 
+    wake_message = message
+    if session.message_type == "GroupMessage":
+        prefix = _group_wake_prefix(context, session_origin)
+        if prefix and not message.lstrip().startswith(prefix):
+            wake_message = f"{prefix} {message}"
+
     message_obj = await StarTools.create_message(
         type=session.message_type,
         self_id="astrbot",
@@ -71,8 +100,8 @@ async def enqueue_terminal_wakeup(
             user_id=session.session_id,
             nickname="用户",
         ),
-        message=[Plain(message)],
-        message_str=message,
+        message=[Plain(wake_message)],
+        message_str=wake_message,
         raw_message={
             "origin": "astrbot_plugin_pi_agent",
             "kind": "terminal_wakeup",
