@@ -52,7 +52,10 @@ async def enqueue_terminal_wakeup(
         type=session.message_type.value,
         self_id="astrbot",
         session_id=session.session_id,
-        sender=MessageMember(user_id="astrbot", nickname="AstrBot Pi Agent"),
+        sender=MessageMember(
+            user_id="astrbot_pi_agent",
+            nickname="AstrBot Pi Agent",
+        ),
         message=[Plain(message)],
         message_str=message,
         raw_message={
