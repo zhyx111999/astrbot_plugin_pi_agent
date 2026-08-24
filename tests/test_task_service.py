@@ -276,9 +276,9 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 
     assert first["content"] == []
     assert second["content"] == []
-    assert service.read(task_id, cursor=0, limit=10)["session_lines"] == [
+    assert service.recent_session_tail(task_id) == (
         '{"type":"message","text":"progress"}\n'
-    ]
+    )
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -286,7 +286,7 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 
 
 @pytest.mark.asyncio
-async def test_result_reads_native_pi_session_lines_by_cursor(tmp_path: Path):
+async def test_session_search_returns_bounded_context(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks.db")
     scheduler = TaskScheduler(
@@ -302,26 +302,14 @@ async def test_result_reads_native_pi_session_lines_by_cursor(tmp_path: Path):
     adapter = FakeAdapter.instances[-1]
     session_path = Path(adapter.session_path)
     session_path.parent.mkdir(parents=True, exist_ok=True)
-    raw_line = '{"type":"message_update","delta":"' + ("x" * 5000) + '"}\n'
+    raw_line = '{"type":"message_update","delta":"' + ("x" * 5000) + 'KEY' + ("y" * 5000) + '"}\n'
     session_path.write_bytes(raw_line.encode())
 
-    recent = service.read(task_id)
-    assert len(recent["session_text"]) <= 50_000
-    assert recent["progress"]["read"]["mode"] == "recent_tail"
+    result = service.search_session(task_id, "KEY")
 
-    result = service.result(task_id, offset=0, limit=1)
-
-    assert result["content"] == []
-    assert result["session_lines"] == [raw_line]
-    assert result["progress"]["read"] == {
-        "mode": "full_lines",
-        "cursor": 0,
-        "next_cursor": 1,
-        "returned": 1,
-        "has_more": False,
-        "source": "pi_native_session_jsonl",
-        "session_path": str(session_path),
-    }
+    assert result["status"] == "found"
+    assert "KEY" in result["session_text"]
+    assert len(result["session_text"]) <= 8_000
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -348,12 +336,10 @@ async def test_provider_error_remains_in_native_session(tmp_path: Path):
     raw_line = '{"type":"message_end","message":{"stopReason":"error","errorMessage":"OpenAI API error (502): upstream unavailable"}}\n'
     session_path.write_bytes(raw_line.encode())
 
-    result = service.result(task_id)
+    result = service.recent_session_tail(task_id)
 
     assert registry.get_task(task_id).status is TaskStatus.RUNNING
-    assert result["error"] is None
-    assert result["session_text"] == raw_line
-    assert result["progress"]["read"]["mode"] == "recent_tail"
+    assert result == raw_line
 
     await service.shutdown()
     await scheduler.shutdown()
@@ -402,9 +388,9 @@ async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Pa
     assert "snapshot" not in repeated_status["progress"]
     assert first_poll["content"] == []
     assert repeated_poll["content"] == []
-    assert service.read(task_id, cursor=0, limit=10)["session_lines"] == [
+    assert service.recent_session_tail(task_id) == (
         '{"type":"message_update","delta":"once"}\n'
-    ]
+    )
 
     await service.shutdown()
     await scheduler.shutdown()

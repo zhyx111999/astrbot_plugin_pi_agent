@@ -25,11 +25,17 @@ def _event(origin: str, *, admin: bool = False):
 
 
 def test_terminal_wakeup_requires_interpreted_user_reply():
-    note = main._terminal_wakeup_note("task-1", "completed", "worker_finished")
+    note = main._terminal_wakeup_note(
+        "task-1",
+        "completed",
+        "worker_finished",
+        "native tail",
+    )
 
     assert "Pi 会话原文" in note
     assert "JSONL" in note
     assert "send_message_to_user" in note
+    assert "native tail" in note
     assert "interpreted_user_reply_only" not in note
 
 

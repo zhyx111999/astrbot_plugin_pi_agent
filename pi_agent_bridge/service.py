@@ -16,7 +16,6 @@ from .scheduler import TaskScheduler
 from .security import safe_error_summary
 
 
-RECENT_SESSION_CHARS = 50_000
 POLL_SESSION_CHARS = 8_000
 
 
@@ -215,72 +214,42 @@ class PiTaskService:
         except Exception as exc:  # noqa: BLE001
             return self.error("task_status", safe_error_summary(exc), task_id=task_id)
 
-    def result(
-        self, task_id: str, *, offset: int = -1, limit: int = 100
+    def search_session(
+        self,
+        task_id: str,
+        keyword: str,
+        *,
+        max_chars: int = POLL_SESSION_CHARS,
     ) -> dict[str, Any]:
-        """Compatibility alias for the bounded native session reader."""
-
-        result = self.read(task_id, cursor=offset, limit=limit)
-        result["operation"] = "task_result"
-        return result
-
-    def read(
-        self, task_id: str, *, cursor: int = -1, limit: int = 100
-    ) -> dict[str, Any]:
-        """Read the recent native session tail without semantic processing."""
+        """Search one native session and return bounded surrounding context."""
 
         try:
-            if cursor < -1 or limit < 1:
-                raise ValueError("cursor must be -1 or non-negative and limit must be positive")
+            if not isinstance(keyword, str) or not keyword.strip():
+                raise ValueError("keyword cannot be empty")
+            if max_chars < 1:
+                raise ValueError("max_chars must be positive")
             task = self.registry.get_task(task_id)
-            if cursor == -1:
-                text, start_byte, total_bytes = _read_session_tail(
-                    task.session_path, max_chars=RECENT_SESSION_CHARS
-                )
-                result = self.envelope("task_read", task_id)
-                result["session_text"] = text
-                result["progress"]["read"] = {
-                    "mode": "recent_tail",
-                    "max_chars": RECENT_SESSION_CHARS,
+            text = _search_session_context(
+                task.session_path,
+                keyword.strip(),
+                max_chars=max_chars,
+            )
+            result = self.ok(
+                "session_search",
+                task_id=task_id,
+                status="found" if text else "not_found",
+                progress={
+                    "resource_type": "async_task_session_search",
+                    "keyword": keyword.strip(),
+                    "max_chars": max_chars,
                     "returned_chars": len(text),
-                    "start_byte": start_byte,
-                    "end_byte": total_bytes,
-                    "total_bytes": total_bytes,
-                    "has_more": start_byte > 0,
-                    "source": "pi_native_session_jsonl",
                     "session_path": task.session_path,
-                }
-                return result
-            return self._read_full_page(task_id, cursor=cursor, limit=limit)
+                },
+            )
+            result["session_text"] = text
+            return result
         except Exception as exc:  # noqa: BLE001
-            return self.error("task_read", safe_error_summary(exc), task_id=task_id)
-
-    def read_full(self, task_id: str, *, cursor: int = 0, limit: int = 100) -> dict[str, Any]:
-        """Read a page of complete native JSONL lines without a size cap."""
-
-        try:
-            if cursor < 0 or limit < 1:
-                raise ValueError("cursor must be non-negative and limit must be positive")
-            return self._read_full_page(task_id, cursor=cursor, limit=limit)
-        except Exception as exc:  # noqa: BLE001
-            return self.error("task_read_full", safe_error_summary(exc), task_id=task_id)
-
-    def _read_full_page(self, task_id: str, *, cursor: int, limit: int) -> dict[str, Any]:
-        task = self.registry.get_task(task_id)
-        lines = _read_session_lines(task.session_path, cursor=cursor, limit=limit)
-        next_cursor = cursor + len(lines)
-        result = self.envelope("task_read_full", task_id)
-        result["session_lines"] = lines
-        result["progress"]["read"] = {
-            "mode": "full_lines",
-            "cursor": cursor,
-            "next_cursor": next_cursor,
-            "returned": len(lines),
-            "has_more": _session_has_more(task.session_path, next_cursor),
-            "source": "pi_native_session_jsonl",
-            "session_path": task.session_path,
-        }
-        return result
+            return self.error("session_search", safe_error_summary(exc), task_id=task_id)
 
     def list_tasks(self, owner_key: str | None = None) -> dict[str, Any]:
         try:
@@ -466,33 +435,37 @@ def _read_session_tail(
     return text, max(0, start_byte), total_bytes
 
 
-def _read_session_lines(
-    session_path: str | None, *, cursor: int, limit: int
-) -> list[str]:
+def _search_session_context(
+    session_path: str | None,
+    keyword: str,
+    *,
+    max_chars: int,
+) -> str:
     if not session_path:
-        return []
+        return ""
     path = Path(session_path).expanduser()
     if not path.is_file():
-        return []
-    lines: list[str] = []
-    with path.open("rb") as stream:
-        for index, line in enumerate(stream):
-            if index < cursor:
+        return ""
+
+    keyword_folded = keyword.casefold()
+    before_limit = max_chars // 2
+    after_limit = max_chars - before_limit
+    rolling = ""
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            combined = rolling + line
+            index = combined.casefold().find(keyword_folded)
+            if index < 0:
+                rolling = combined[-before_limit:]
                 continue
-            if len(lines) >= limit:
-                break
-            lines.append(line.decode("utf-8", errors="replace"))
-    return lines
 
-
-def _session_has_more(session_path: str | None, cursor: int) -> bool:
-    if not session_path:
-        return False
-    path = Path(session_path).expanduser()
-    if not path.is_file():
-        return False
-    with path.open("rb") as stream:
-        for index, _line in enumerate(stream):
-            if index >= cursor:
-                return True
-    return False
+            match_end = index + len(keyword)
+            before = combined[max(0, index - before_limit) : index]
+            after = combined[match_end:]
+            while len(after) < after_limit:
+                next_line = stream.readline()
+                if not next_line:
+                    break
+                after += next_line
+            return (before + combined[index:match_end] + after[:after_limit])[:max_chars]
+    return ""

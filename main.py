@@ -37,18 +37,26 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-def _terminal_wakeup_note(task_id: str, status: str, reason: str) -> str:
-    """Build a user-facing reply policy for AstrBot's native wake event."""
+def _terminal_wakeup_note(
+    task_id: str,
+    status: str,
+    reason: str,
+    tail: str,
+) -> str:
+    """Build a terminal prompt with a bounded native-session tail."""
 
     return (
         "后台 Pi Agent 任务已进入终态。"
         f"任务 ID：{task_id}；状态：{status}；原因：{reason}。\n"
-        "请先读取该任务的 Pi 原生会话，再根据原用户需求判断是否需要回复。"
-        "不要把 Pi 会话原文、JSONL、工具调用、命令输出、内部状态、错误堆栈或系统日志直接发送给用户。"
+        "下面附带对应 Pi 原生会话最近 8,000 个字符。"
+        "请根据这些内容和原用户需求整理一条简洁自然的最终回复。"
+        "不要直接发送 Pi 会话原文、JSONL、工具调用、命令输出、内部状态、错误堆栈或系统日志。"
         "不要复制 Pi 的过程性总结，也不要发送以省略号、系统腔或装饰性颜文字结尾的原始文本。"
-        "如确实需要通知用户，只发送一条经过主 Agent 整理的、简洁自然的普通用户回复；"
         "需要发送文件时使用 send_message_to_user 发送文件，并附带简短说明。"
-        "如果没有有意义的用户可见结果，则不要发送消息。"
+        "如果没有有意义的用户可见结果，则不要发送消息。\n"
+        "--- Pi 最近会话尾部开始 ---\n"
+        f"{tail}\n"
+        "--- Pi 最近会话尾部结束 ---"
     )
 
 
@@ -254,7 +262,25 @@ class PiAgentPlugin(Star):
                     task.task_id,
                 )
 
-        async def retry_terminal_wakeup(task, note: str) -> None:
+        def terminal_note(task, reason: str) -> str:
+            service = self.pi_task_service
+            tail = ""
+            if service is not None:
+                try:
+                    tail = service.recent_session_tail(task.task_id, max_chars=8_000)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to read terminal Pi session tail for %s",
+                        task.task_id,
+                    )
+            return _terminal_wakeup_note(
+                task.task_id,
+                task.status.value,
+                reason,
+                tail,
+            )
+
+        async def retry_terminal_wakeup(task, reason: str) -> None:
             """Retry a startup wakeup after AstrBot has loaded its platforms."""
 
             for delay in (2.0, 4.0, 8.0, 16.0, 30.0):
@@ -263,7 +289,7 @@ class PiAgentPlugin(Star):
                     await enqueue_terminal_wakeup(
                         context=self.astrbot_adapter.context,
                         session_origin=task.owner_key,
-                        message=note,
+                        message=terminal_note(task, reason),
                     )
                     logger.info(
                         "Relayed deferred Pi terminal wakeup for %s",
@@ -292,13 +318,11 @@ class PiAgentPlugin(Star):
         async def wake_terminal_task(task, reason: str) -> None:
             """Relay a Pi terminal wakeup into AstrBot's normal event pipeline."""
 
-            status = task.status.value
-            note = _terminal_wakeup_note(task.task_id, status, reason)
             try:
                 await enqueue_terminal_wakeup(
                     context=self.astrbot_adapter.context,
                     session_origin=task.owner_key,
-                    message=note,
+                    message=terminal_note(task, reason),
                 )
             except ValueError as exc:
                 if not str(exc).startswith("Platform not found:"):
@@ -308,7 +332,7 @@ class PiAgentPlugin(Star):
                     )
                     return
                 retry = asyncio.create_task(
-                    retry_terminal_wakeup(task, note),
+                    retry_terminal_wakeup(task, reason),
                     name=f"pi-terminal-wakeup-{task.task_id}",
                 )
                 self._pending_terminal_wakeups.add(retry)
@@ -573,85 +597,6 @@ class PiAgentPlugin(Star):
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc))
 
-    @filter.llm_tool(name="pi_task_read")
-    async def pi_task_read(
-        self, event: AstrMessageEvent, task_id: str
-    ) -> str:
-        """Read the recent context of a pi_agent task for AstrBot.
-
-        This supporting inspection tool returns at most 50,000 characters
-        from the native session tail without summarizing or rewriting it.
-        Use pi_task_read_full only when the user explicitly asks for the
-        complete session, then end the current tool loop.
-
-        After this tool returns, end the current AstrBot tool loop. Do not
-        immediately call poll, status, result, or read again in the same turn.
-
-        Args:
-            task_id(string): Task id returned by pi_agent
-        """
-        operation = "task_read"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied, task_id=task_id)
-        try:
-            service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(service.read(task_id))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
-
-    @filter.llm_tool(name="pi_task_read_full")
-    async def pi_task_read_full(
-        self, event: AstrMessageEvent, task_id: str, cursor: int = 0, limit: int = 100
-    ) -> str:
-        """Read complete native Pi session JSONL lines when explicitly requested.
-
-        Normal inspection should use pi_task_read, which returns only the
-        recent 50,000-character tail. Use this tool only when the user asks
-        to inspect the complete session. End the current tool loop after it
-        returns and continue with a later page only when necessary.
-
-        Args:
-            task_id(string): Task id returned by pi_agent
-            cursor(number): Zero-based native session line cursor
-            limit(number): Maximum complete session lines to return
-        """
-        operation = "task_read_full"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied, task_id=task_id)
-        try:
-            service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(
-                service.read_full(task_id, cursor=cursor, limit=limit)
-            )
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
-
-    @filter.llm_tool(name="pi_task_result")
-    async def pi_task_result(
-        self, event: AstrMessageEvent, task_id: str, offset: int = 0, limit: int = 100
-    ) -> str:
-        """Compatibility reader for a task previously created by pi_agent.
-
-        This is not an Agent execution tool or a summarized result endpoint.
-        Use pi_task_read for normal inspection and end the current tool loop.
-
-        After this tool returns, end the current AstrBot tool loop. Do not
-        chain another Pi inspection call in the same turn.
-
-        Args:
-            task_id(string): Task id returned by pi_agent
-            offset(number): Zero-based session line cursor to continue from
-            limit(number): Maximum native session lines to return
-        """
-        operation = "task_result"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied, task_id=task_id)
-        try:
-            service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(service.result(task_id, offset=offset, limit=limit))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
-
     @filter.llm_tool(name="pi_task_poll")
     async def pi_task_poll(self, event: AstrMessageEvent, task_id: str) -> str:
         """Observe Pi state and return a bounded raw native-session tail.
@@ -786,6 +731,30 @@ class PiAgentPlugin(Star):
             return self._bridge_dump(service.session_inspect(session_id))
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=session_id)
+
+    @filter.llm_tool(name="pi_session_search")
+    async def pi_session_search(
+        self,
+        event: AstrMessageEvent,
+        session_id: str,
+        keyword: str,
+    ) -> str:
+        """Search a Pi native session and return up to 8,000 surrounding chars.
+
+        Args:
+            session_id(string): Task ID returned by pi_agent
+            keyword(string): Literal keyword to search in the native session
+        """
+        operation = "session_search"
+        try:
+            service = await self._service_for_task(event, session_id)
+            return self._bridge_dump(service.search_session(session_id, keyword))
+        except Exception as exc:  # noqa: BLE001
+            return self._bridge_error(
+                operation,
+                safe_error_summary(exc),
+                task_id=session_id,
+            )
 
     @filter.llm_tool(name="pi_session_resume")
     async def pi_session_resume(self, event: AstrMessageEvent, task_id: str) -> str:

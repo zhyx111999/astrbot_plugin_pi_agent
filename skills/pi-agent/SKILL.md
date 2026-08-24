@@ -11,7 +11,7 @@ Pi is AstrBot's general-purpose Agent executor and the default executor for task
 
 Use `pi_agent` by default whenever the task involves tools, files, external information, execution, validation, or non-trivial reasoning, even if the task may be completed quickly. Only very simple one-turn conversation, such as a basic explanation, translation, short rewrite, or casual reply with no tool/file work, should stay in AstrBot's own Agent.
 
-Calling `pi_agent` returns a `task_id` immediately. When the task reaches completed, failed, cancelled, or orphaned, the plugin submits an AstrBot wake event into the owning conversation's normal event pipeline. The main model then reads the Pi session itself and decides whether to reply, send a file, or manage the task further. The plugin never sends the Pi result directly.
+Calling `pi_agent` returns a `task_id` immediately. When the task reaches completed, failed, cancelled, or orphaned, the plugin submits an AstrBot wake event into the owning conversation's normal event pipeline. The main model receives a bounded native-session tail and decides whether to reply, send a file, or manage the task further. The plugin never sends the Pi result directly.
 
 ## Task Creation
 
@@ -21,19 +21,18 @@ The prompt must be a complete, self-contained task instruction. Include the targ
 
 At creation time, the new Pi session receives only the main model's complete, already-refined task request plus the selected model binding and explicit Pi runtime settings. AstrBot persona, full system prompts, conversation history, raw events, media context, and viewer context are not injected into the Pi session. Later inspection or management never injects any caller context.
 
-Terminal wakeups are submitted through AstrBot's public event factory into the original session's normal event pipeline. After reading a terminal Pi session, the main Agent must never forward raw Pi session text, JSONL, tool logs, command output, internal status, or stack traces. If a user-visible reply is needed, produce one concise, natural, interpreted reply through the normal response pipeline; send files through the normal agent tools with a short explanation. If there is no meaningful user-visible result, do not send a message.
+Terminal wakeups are submitted through AstrBot's public event factory into the original session's normal event pipeline. After receiving an intermediate or terminal Pi session tail, the main Agent must never forward raw Pi session text, JSONL, tool logs, command output, internal status, or stack traces. If a user-visible reply is needed, produce one concise, natural, interpreted reply through the normal response pipeline; send files through the normal agent tools with a short explanation. If there is no meaningful user-visible result, do not send a message.
 
 ## AstrBot-Controlled Workflow
 
 1. Call `pi_agent` and record the returned `task_id`.
-2. Continue the current AstrBot conversation; after `pi_agent` returns, end the current tool loop immediately. Do not poll or read the task in the same turn.
-3. When a later user turn requires Pi information, call `pi_task_list` or the known task tool. After each list/status/poll/read call, end the current tool loop; never chain polling calls in one turn.
+2. Continue the current AstrBot conversation; after `pi_agent` returns, end the current tool loop immediately. Do not poll or search the task in the same turn.
+3. When a later user turn requires Pi information, call `pi_task_list` or the known task tool. After each list/status/poll/search call, end the current tool loop; never chain polling calls in one turn.
 4. Call `pi_task_status` for control metadata without Pi content.
 5. Call `pi_task_poll` when AstrBot explicitly needs one short Pi state observation. It returns control metadata plus an unchanged native-session tail capped at 8,000 characters; it does not summarize or interpret Pi events.
-6. For normal inspection, call `pi_task_read(task_id)` to receive only the recent 50,000-character tail of the native Pi session. The plugin does not parse, summarize, classify, or rewrite it.
-7. Only when the user explicitly asks for the complete session, call `pi_task_read_full(task_id, cursor?, limit?)` for line-based full-session pages. After either read tool returns, end the current tool loop; do not immediately request another page unless the user explicitly needs it.
-8. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
-9. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
+6. For keyword inspection, call `pi_session_search(session_id, keyword)` to receive matching native-session context capped at 8,000 characters. The plugin does not parse, summarize, classify, or rewrite it.
+7. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
+8. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
 The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again. If AstrBot or the plugin reloads, an unfinished task is restarted from its native session and explicitly continued when the old worker is no longer alive. Terminal wakeups are only for completed, failed, cancelled, and orphaned states.
 
@@ -43,9 +42,7 @@ The plugin does not create semantic progress summaries or automatically pause a 
 - `pi_task_list()`: List all registered async Pi tasks for AstrBot to select.
 - `pi_task_status(task_id: string)`: Read AstrBot task control metadata without Pi event content.
 - `pi_task_poll(task_id: string)`: Explicitly request one short Pi state observation and receive an unchanged native-session tail capped at 8,000 characters.
-- `pi_task_read(task_id: string)`: Read only the recent 50,000-character tail of the native Pi session. No semantic rewriting is performed.
-- `pi_task_read_full(task_id: string, cursor?: number, limit?: number)`: Explicitly read complete native Pi session lines by cursor when the user asks for full history.
-- `pi_task_result(task_id: string)`: Compatibility alias for the bounded recent-session reader.
+- `pi_session_search(session_id: string, keyword: string)`: Search a native Pi session and return matching context capped at 8,000 characters.
 - `pi_task_follow_up(task_id: string, message: string)`: Send an explicit additional requirement to the existing Pi session.
 - `pi_task_resume(task_id: string)`: Resume an existing task/session without rebuilding its original context.
 - `pi_task_cancel(task_id: string)`: Cancel a task while retaining its durable history.
@@ -60,7 +57,7 @@ The plugin does not create semantic progress summaries or automatically pause a 
 
 Read and write permissions are separate:
 
-- Any ordinary user may list, inspect, poll, read, and inspect artifacts for registered tasks, including tasks owned by other users.
+- Any ordinary user may list, inspect, poll, search, and inspect artifacts for registered tasks, including tasks owned by other users.
 - Only the task owner or an AstrBot administrator may send follow-ups, resume, cancel, delete, or otherwise change a task.
 - AstrBot administrators may manage every registered task regardless of owner.
 - Reading another user's task never changes that task and never injects the reader's context into its Pi session.
@@ -73,11 +70,11 @@ Read and write permissions are separate:
 - Empty or zero numeric plugin settings are omitted so Pi uses its own defaults.
 - Every new Pi task enables Pi's native automatic context compaction; this is a Pi runtime setting and does not cause AstrBot to summarize or rewrite the session.
 - The new task receives only the main model's refined request. AstrBot persona, system prompt, conversation history, raw event, and media context are not copied into Pi.
-- `pi_task_read` reads only the recent native session tail by default. `pi_task_read_full` is the explicit complete-session path. The plugin does not build a second content history, summarize errors, classify progress, or extract results from either path.
+- `pi_session_search` returns only bounded context around a literal keyword, capped at 8,000 characters. The plugin does not build a second content history, summarize errors, classify progress, or extract results.
 - Follow-ups add only the explicit message supplied by AstrBot; they do not copy the caller's full AstrBot context.
 - AstrBot tools, MCP servers, Skills, and extensions are not inherited automatically. Only paths explicitly configured in `pi_skill_paths` and `pi_extension_paths` are passed to Pi. Pi built-in tools remain enabled.
 - Keep `pi_mcp_config_paths` empty because this bridge does not provide a native Pi MCP integration.
 
 ## Silent Worker Boundary
 
-Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer never wakes the main model and never sends completion, failure, progress, or idle notifications. `status` exposes task-control metadata; `poll` exposes a bounded raw session tail; `read` is the explicit larger native-session channel. A clean worker exit is converged to `completed`; a nonzero worker exit is `failed`.
+Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer wakes the main model only when a changed native-session tail is available, at the configurable interval. `status` exposes task-control metadata; `poll` and `pi_session_search` expose bounded raw session context capped at 8,000 characters. A clean worker exit is converged to `completed`; a nonzero worker exit is `failed`.
