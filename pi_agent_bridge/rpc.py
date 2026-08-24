@@ -325,14 +325,7 @@ class PiRpcAdapter:
             environment.update(self.environment)
             if self.agent_dir:
                 environment["PI_CODING_AGENT_DIR"] = self.agent_dir
-            try:
-                process = self._process_factory(*args, cwd=self.cwd, env=environment)
-            except TypeError as exc:
-                # Keep simple test doubles and older adapters that only accept
-                # ``cwd`` usable while the built-in factory receives env.
-                if "env" not in str(exc):
-                    raise
-                process = self._process_factory(*args, cwd=self.cwd)
+            process = self._process_factory(*args, cwd=self.cwd, env=environment)
             if asyncio.iscoroutine(process) or isinstance(process, Awaitable):
                 process = await process
             self.process = process
@@ -899,7 +892,3 @@ class PiRpcAdapter:
         self.process = None
         self._redaction_secrets = frozenset()
 
-    async def close(self) -> None:
-        """Alias for :meth:`terminate`."""
-
-        await self.terminate()

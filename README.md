@@ -23,7 +23,7 @@ Pi 官方 CLI、RPC JSONL 协议和 AstrBot 官方代码均保持原样。本仓
 AstrBot 主模型
     │  pi_agent（短调用，立即返回 task_id）
     ▼
-PiTaskService / ToolRegistry
+PiTaskService / LLM tool facade
     ▼
 TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/session）
     │                   │
@@ -41,7 +41,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - `pi_agent_bridge/service.py`：给 AstrBot 工具使用的任务控制、8,000 字符 recent-tail 读取和关键词上下文检索 facade。
 - `pi_agent_bridge/context.py`：构造仅包含主模型整理后任务请求的 Pi 初始 prompt；不读取 AstrBot 人设、历史、事件或媒体上下文。
 - `pi_agent_bridge/provider.py`：读取 AstrBot 选定 Provider 的连接地址、鉴权和模型绑定；将插件显式配置的 PiModelSettings 写入任务专属 Pi `models.json`。
-- `pi_agent_bridge/artifacts.py`：保留兼容模块；新异步任务不自动扫描或提炼 workspace 内容。
+- 当前版本不自动扫描或提炼 workspace 内容；任务产物只保留明确登记的元数据。
 - `pi_agent_bridge/normal_pipeline.py`：使用 AstrBot 公开 StarTools.create_message/create_event 将 Pi 中间进度和终态通知提交回普通事件 pipeline；群聊使用会话配置的唤醒前缀，不可用时不直接发送 Pi 内容。
 - Pi native session 自动压缩：每个新异步任务都会启用 Pi 官方 `set_auto_compaction`，避免长期上下文无限膨胀。
 - Pi 终态唤醒：任务完成、失败、取消或失联时，插件通过 AstrBot 公开事件入口把终态通知重新提交到原会话普通 pipeline；插件不直接发送 Pi 内容。

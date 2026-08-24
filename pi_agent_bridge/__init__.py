@@ -12,12 +12,6 @@ from .rpc import (
 )
 from .models import ArtifactRecord, SnapshotRecord, TaskRecord, TaskStatus
 from .registry import InvalidTaskTransition, TaskNotFoundError, TaskRegistry, TaskRegistryError
-from .astrbot_adapter import (
-    AstrBotAdapter,
-    AstrBotAdapterError,
-    UnsupportedAstrBotCapability,
-    WakeMainAgent,
-)
 from .scheduler import TaskScheduler
 from .service import PiTaskService
 from .runtime import (
@@ -30,7 +24,6 @@ from .runtime import (
     PiRuntimeUnavailable,
     PiRuntimeVersionError,
 )
-from .tools import ToolRegistry
 from .context import build_pi_prompt, event_owner_key
 from .worker import (
     WORKER_DESCRIPTOR_KEY,
@@ -45,8 +38,6 @@ from .worker import (
 
 __all__ = [
     "ArtifactRecord",
-    "AstrBotAdapter",
-    "AstrBotAdapterError",
     "InvalidTaskTransition",
     "PiEvent",
     "PiProcessState",
@@ -68,11 +59,8 @@ __all__ = [
     "PiRuntimeResolution",
     "PiRuntimeUnavailable",
     "PiRuntimeVersionError",
-    "ToolRegistry",
     "build_pi_prompt",
     "event_owner_key",
-    "UnsupportedAstrBotCapability",
-    "WakeMainAgent",
     "WORKER_DESCRIPTOR_KEY",
     "PiWorkerConfig",
     "WorkerConfigFactory",

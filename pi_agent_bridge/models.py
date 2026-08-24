@@ -36,8 +36,6 @@ class TaskRecord:
     created_at: str
     updated_at: str
     finished_at: str | None
-    # Added after the initial registry contract; kept last with a default so
-    # external integrations using positional construction remain compatible.
     session_path: str | None = None
 
 

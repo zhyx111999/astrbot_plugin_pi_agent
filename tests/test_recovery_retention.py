@@ -68,20 +68,12 @@ class RecoveryAdapter:
         self.process.returncode = 0
 
 
-class TakeoverFactory:
+class RecoveryFactory:
     def __init__(self):
         self.created: list[RecoveryAdapter] = []
-        self.takeover_calls: list[dict] = []
 
     def __call__(self, **kwargs):
         adapter = RecoveryAdapter(**kwargs)
-        self.created.append(adapter)
-        return adapter
-
-    async def take_over(self, **kwargs):
-        self.takeover_calls.append(kwargs)
-        adapter = RecoveryAdapter(**kwargs)
-        await adapter.start()
         self.created.append(adapter)
         return adapter
 
@@ -168,7 +160,7 @@ async def test_restart_resumes_dead_worker_from_native_session(tmp_path: Path):
         process_id=999999,
         workspace=str(tmp_path / "workspace"),
     )
-    factory = TakeoverFactory()
+    factory = RecoveryFactory()
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -185,7 +177,6 @@ async def test_restart_resumes_dead_worker_from_native_session(tmp_path: Path):
     assert resumed.status is TaskStatus.RUNNING
     assert resumed.process_id == 42001
     assert registry.get_latest_snapshot(task.task_id) is None
-    assert factory.takeover_calls == []
     assert factory.created[-1].steer_messages
 
     await scheduler.shutdown()
@@ -204,7 +195,6 @@ async def test_restart_keeps_logically_paused_task_paused(tmp_path: Path):
         task.task_id,
         {"phase": "waiting"},
         has_meaningful_event=False,
-        no_meaningful_event_limit=1,
     )
     assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
     scheduler = TaskScheduler(
@@ -225,75 +215,6 @@ async def test_restart_keeps_logically_paused_task_paused(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_restart_uses_reconnectable_factory_takeover(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
-    session = tmp_path / "session.jsonl"
-    session.write_text('{"type":"session","id":"sid"}\n', encoding="utf-8")
-    task = _running_task(
-        registry,
-        session_path=str(session),
-        process_id=42000,
-        workspace=str(tmp_path / "workspace"),
-    )
-    factory = TakeoverFactory()
-    scheduler = TaskScheduler(
-        registry,
-        workspace_root=tmp_path / "workspaces",
-        adapter_factory=factory,
-        process_probe=lambda _pid: True,
-        poll_interval_seconds=3600,
-        session_retention_hours=None,
-    )
-
-    await scheduler.start()
-    assert [item["task_id"] for item in factory.takeover_calls] == [task.task_id]
-    assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
-    assert scheduler.adapter(task.task_id) is factory.created[0]
-
-    await scheduler.shutdown()
-    registry.close()
-
-
-@pytest.mark.asyncio
-async def test_restart_attempts_takeover_for_logically_paused_worker(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
-    session = tmp_path / "session.jsonl"
-    session.write_text('{"type":"session","id":"sid"}\n', encoding="utf-8")
-    task = _running_task(
-        registry,
-        session_path=str(session),
-        process_id=42000,
-        workspace=str(tmp_path / "workspace"),
-    )
-    registry.record_snapshot(
-        task.task_id,
-        {"phase": "waiting"},
-        has_meaningful_event=False,
-        no_meaningful_event_limit=1,
-    )
-    assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
-
-    factory = TakeoverFactory()
-    scheduler = TaskScheduler(
-        registry,
-        workspace_root=tmp_path / "workspaces",
-        adapter_factory=factory,
-        process_probe=lambda _pid: True,
-        poll_interval_seconds=3600,
-        session_retention_hours=None,
-    )
-
-    await scheduler.start()
-
-    assert [item["task_id"] for item in factory.takeover_calls] == [task.task_id]
-    assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
-    assert scheduler.adapter(task.task_id) is factory.created[0]
-
-    await scheduler.shutdown()
-    registry.close()
-
-
-@pytest.mark.asyncio
 async def test_submit_passes_task_scoped_worker_config_to_new_worker(tmp_path: Path):
     registry = TaskRegistry(tmp_path / "tasks.db")
     task = registry.create_task(
@@ -301,7 +222,7 @@ async def test_submit_passes_task_scoped_worker_config_to_new_worker(tmp_path: P
         prompt="long task",
         context=_worker_context(provider="submit-provider", model="submit-model"),
     )
-    factory = TakeoverFactory()
+    factory = RecoveryFactory()
     agent_root = tmp_path / "agents"
     scheduler = TaskScheduler(
         registry,
@@ -338,7 +259,7 @@ async def test_explicit_resume_restarts_orphaned_session(tmp_path: Path):
         workspace=str(tmp_path / "workspace"),
         status=TaskStatus.ORPHANED,
     )
-    factory = TakeoverFactory()
+    factory = RecoveryFactory()
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -370,7 +291,7 @@ async def test_resume_rebuilds_task_scoped_worker_config(tmp_path: Path):
         session_path=str(session),
         context=_worker_context(provider="resume-provider", model="resume-model"),
     )
-    factory = TakeoverFactory()
+    factory = RecoveryFactory()
     agent_root = tmp_path / "agents"
     scheduler = TaskScheduler(
         registry,
@@ -398,43 +319,6 @@ async def test_resume_rebuilds_task_scoped_worker_config(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_takeover_rebuilds_task_scoped_worker_config(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
-    session = tmp_path / "session.jsonl"
-    session.write_text('{"type":"session","id":"sid"}\n', encoding="utf-8")
-    task = _running_task(
-        registry,
-        session_path=str(session),
-        process_id=42000,
-        context=_worker_context(provider="takeover-provider", model="takeover-model"),
-    )
-    factory = TakeoverFactory()
-    agent_root = tmp_path / "agents"
-    scheduler = TaskScheduler(
-        registry,
-        workspace_root=tmp_path / "workspaces",
-        agent_root=agent_root,
-        adapter_factory=factory,
-        worker_config_factory=_task_worker_config,
-        process_probe=lambda _pid: True,
-        poll_interval_seconds=3600,
-        session_retention_hours=None,
-    )
-
-    await scheduler.start()
-
-    _assert_task_config(
-        factory.takeover_calls[0],
-        task_id=task.task_id,
-        agent_root=agent_root,
-        provider="takeover-provider",
-        model="takeover-model",
-    )
-    await scheduler.shutdown()
-    registry.close()
-
-
-@pytest.mark.asyncio
 async def test_scheduler_cleanup_removes_owned_workspace_and_sessions(tmp_path: Path):
     registry = TaskRegistry(tmp_path / "tasks.db")
     task = _running_task(registry, task_id="expired")
@@ -453,7 +337,7 @@ async def test_scheduler_cleanup_removes_owned_workspace_and_sessions(tmp_path: 
         registry,
         workspace_root=workspace_root,
         session_root=session_root,
-        adapter_factory=TakeoverFactory(),
+        adapter_factory=RecoveryAdapter,
         poll_interval_seconds=3600,
         session_retention_hours=None,
     )

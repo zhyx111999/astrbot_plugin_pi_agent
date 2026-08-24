@@ -467,5 +467,3 @@ class TaskRegistry:
                 )
             return records
 
-    # Descriptive alias for callers that prefer cleanup terminology.
-    cleanup_expired_tasks = purge_expired_tasks

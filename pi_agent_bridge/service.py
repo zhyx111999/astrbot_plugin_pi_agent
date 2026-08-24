@@ -144,11 +144,6 @@ class PiTaskService:
         except (TaskNotFoundError, InvalidTaskTransition):
             return
 
-    async def close(self) -> None:
-        """Alias for :meth:`shutdown` used by host lifecycle adapters."""
-
-        await self.shutdown()
-
     async def poll(self, task_id: str) -> dict[str, Any]:
         """Observe state and return a bounded raw native-session progress tail."""
 

@@ -10,7 +10,6 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pi_agent_bridge import (
-    AstrBotAdapter,
     PiTaskService,
     TaskScheduler,
     TaskRegistry,
@@ -80,13 +79,9 @@ class PiAgentPlugin(Star):
     """Run isolated Pi Agent tasks from AstrBot's main model."""
 
     def __init__(self, context: Context, config=None):
-        try:
-            super().__init__(context, config=config)
-        except TypeError:
-            # Keep standalone test doubles and older AstrBot Star bases working.
-            super().__init__(context)
+        super().__init__(context, config=config)
         self.plugin_config = config if config is not None else {}
-        self.astrbot_adapter = AstrBotAdapter(context, self.plugin_config)
+        self.context = context
         self.pi_task_service: PiTaskService | None = None
         self.pi_task_scheduler: TaskScheduler | None = None
         self._task_registry: TaskRegistry | None = None
@@ -207,7 +202,7 @@ class PiAgentPlugin(Star):
                 raise PiProviderError(
                     "The pi_model setting must select an AstrBot-configured model"
                 )
-            getter = getattr(self.astrbot_adapter.context, "get_provider_by_id", None)
+            getter = getattr(self.context, "get_provider_by_id", None)
             if not callable(getter):
                 raise PiProviderError("AstrBot provider lookup API is unavailable")
             provider = getter(source_id)
@@ -252,7 +247,7 @@ class PiAgentPlugin(Star):
                     return
                 self._progress_digests[task.task_id] = digest
                 await enqueue_progress_wakeup(
-                    context=self.astrbot_adapter.context,
+                    context=self.context,
                     session_origin=task.owner_key,
                     message=_progress_wakeup_note(task.task_id, tail),
                 )
@@ -287,7 +282,7 @@ class PiAgentPlugin(Star):
                 await asyncio.sleep(delay)
                 try:
                     await enqueue_terminal_wakeup(
-                        context=self.astrbot_adapter.context,
+                        context=self.context,
                         session_origin=task.owner_key,
                         message=terminal_note(task, reason),
                     )
@@ -320,7 +315,7 @@ class PiAgentPlugin(Star):
 
             try:
                 await enqueue_terminal_wakeup(
-                    context=self.astrbot_adapter.context,
+                    context=self.context,
                     session_origin=task.owner_key,
                     message=terminal_note(task, reason),
                 )
@@ -386,16 +381,9 @@ class PiAgentPlugin(Star):
     def _default_state_root() -> Path:
         """Use AstrBot's plugin-data directory, never the source checkout."""
 
-        try:
-            from astrbot.api.star import StarTools
+        from astrbot.api.star import StarTools
 
-            getter = getattr(StarTools, "get_data_dir", None)
-            if callable(getter):
-                return Path(getter("astrbot_plugin_pi_agent"))
-        except Exception:  # noqa: BLE001
-            # Standalone tests and older hosts may not expose StarTools yet.
-            pass
-        return Path(__file__).with_name(".pi")
+        return Path(StarTools.get_data_dir("astrbot_plugin_pi_agent"))
 
     async def _task_service_or_error(self) -> PiTaskService:
         if not self._config_bool("enable_async_tasks", True):

@@ -117,7 +117,6 @@ async def test_create_returns_before_worker_and_repeated_observations_stay_runni
         workspace_root=tmp_path / "workspaces",
         adapter_factory=FakeAdapter,
         poll_interval_seconds=3600,
-        no_meaningful_event_limit=3,
     )
     service = PiTaskService(registry, scheduler)
 
@@ -406,7 +405,6 @@ async def test_terminal_observation_never_notifies_chat(tmp_path: Path):
         workspace_root=tmp_path / "workspaces",
         adapter_factory=FakeAdapter,
         poll_interval_seconds=3600,
-        no_meaningful_event_limit=1,
     )
     service = PiTaskService(registry, scheduler)
     created = await service.create_task(owner_key="qq:1", task="inspect")
@@ -432,7 +430,6 @@ async def test_resume_steers_same_worker_and_cancel_delete_cleanup(tmp_path: Pat
         workspace_root=tmp_path / "workspaces",
         adapter_factory=FakeAdapter,
         poll_interval_seconds=3600,
-        no_meaningful_event_limit=1,
     )
     service = PiTaskService(registry, scheduler)
 

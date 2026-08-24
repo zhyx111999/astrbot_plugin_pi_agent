@@ -72,7 +72,6 @@ class TaskScheduler:
         model: str | None = None,
         environment: dict[str, str] | None = None,
         poll_interval_seconds: int = 180,
-        no_meaningful_event_limit: int = 3,
         max_concurrent_tasks: int = 4,
         command_timeout: float = 10.0,
         session_retention_hours: float | None = 24,
@@ -87,8 +86,6 @@ class TaskScheduler:
     ) -> None:
         if poll_interval_seconds < 1:
             raise ValueError("poll_interval_seconds must be at least 1")
-        if no_meaningful_event_limit < 1:
-            raise ValueError("no_meaningful_event_limit must be at least 1")
         if max_concurrent_tasks < 1:
             raise ValueError("max_concurrent_tasks must be at least 1")
         if command_timeout <= 0:
@@ -118,7 +115,6 @@ class TaskScheduler:
         self.model = model
         self.environment = dict(environment or {})
         self.poll_interval_seconds = poll_interval_seconds
-        self.no_meaningful_event_limit = no_meaningful_event_limit
         self.max_concurrent_tasks = max_concurrent_tasks
         self.command_timeout = command_timeout
         self.session_retention_hours = session_retention_hours
@@ -255,28 +251,16 @@ class TaskScheduler:
                     "Pi worker stopped during scheduler shutdown",
                 )
         else:
-            # A host that can keep the parent process alive may detach workers
-            # and let the next scheduler instance recover from session files.
-            # We never pretend stdio can be reattached by PID.
-            # Keep the durable state as ``running`` and preserve its PID.  The
-            # next scheduler gets one chance to take over the transport; only
-            # an unsuccessful takeover turns the task into ``orphaned``.
+            # Detached stdio workers are not reattached by PID. The next
+            # scheduler will recover from the persisted native session.
             return
 
     async def recover_existing_tasks(self) -> list[str]:
-        """Best-effort takeover of persisted workers after plugin restart.
+        """Recover persisted workers from their native sessions after restart.
 
-        Pi's standard RPC transport is a child-process stdin/stdout stream and
-        has no attach-by-PID operation.  A transport adapter may opt in to
-        ``take_over`` when it has a reconnectable worker endpoint.  The stock
-        adapter cannot do that, so it safely retains the task and marks it
-        ``orphaned`` rather than launching a second writer for the same Pi
-        session.  A later explicit ``resume`` may start a fresh worker from
-        the durable session file.
-
-        Returns task ids successfully bound to a live adapter.  Repeated calls
-        are safe and only inspect tasks that are not already owned by this
-        scheduler instance.
+        Pi's stdio transport cannot be reattached by PID. A worker with a
+        missing process is restarted from its persisted native session; a live
+        worker is marked orphaned rather than receiving a second writer.
         """
 
         async with self._recovery_lock:
@@ -306,13 +290,7 @@ class TaskScheduler:
             return recovered
 
     async def _recover_task(self, task: TaskRecord) -> PiRpcAdapter | None:
-        """Recover interrupted nonterminal work from its native session.
-
-        Pi RPC uses stdio and cannot be adopted by PID. If the old child is
-        gone, start a fresh worker on the same native session and explicitly
-        continue the pending work. A still-live child without a reconnectable
-        transport remains orphaned: launching a second writer would be unsafe.
-        """
+        """Recover interrupted work from its persisted native session."""
 
         if task.process_id is None or not self.process_probe(task.process_id):
             adapter = await self._restart_from_session(task)
@@ -335,9 +313,6 @@ class TaskScheduler:
                 await self._notify_terminal_task(orphaned, reason="worker_orphaned")
             return None
 
-        adapter = await self._try_take_over(task)
-        if adapter is not None:
-            return adapter
         orphaned = self._mark_orphaned(
             task.task_id,
             "Pi worker is alive but its RPC transport cannot be reattached",
@@ -345,55 +320,6 @@ class TaskScheduler:
         if orphaned is not None:
             await self._notify_terminal_task(orphaned, reason="worker_orphaned")
         return None
-
-    async def _try_take_over(self, task: TaskRecord) -> PiRpcAdapter | None:
-        """Ask a reconnect-capable adapter factory to reclaim a live worker."""
-
-        take_over = getattr(self.adapter_factory, "take_over", None)
-        if not callable(take_over):
-            return None
-        workspace = self.workspace_for(task.task_id, task.workspace)
-        try:
-            workspace.mkdir(parents=True, exist_ok=True)
-            takeover_kwargs = await self._adapter_kwargs(task, **{
-                "task_id": task.task_id,
-                "process_id": task.process_id,
-                "session_id": task.session_id,
-                "session_path": task.session_path,
-                "cwd": workspace,
-                "name": f"astrbot-{task.task_id[:8]}",
-                "command_timeout": self.command_timeout,
-            })
-            # ``take_over`` is an optional extension point predating runtime
-            # resolution. Keep its old call contract unless a runtime adapter
-            # is explicitly configured.
-            if self.runtime_adapter is not None:
-                takeover_kwargs["executable"] = self.resolve_executable()
-            result = _call_supported(take_over, takeover_kwargs)
-            if inspect.isawaitable(result):
-                result = await result
-            if result is None or not getattr(result, "is_running", False):
-                return None
-            adapter = result
-            self._adapters[task.task_id] = adapter
-            state = await adapter.get_state()
-            self.registry.update_runtime(
-                task.task_id,
-                session_id=_session_id(state) or task.session_id,
-                session_path=_session_path(state) or task.session_path,
-                process_id=_process_id(adapter) or task.process_id,
-                workspace=str(workspace),
-            )
-            current = self.registry.get_task(task.task_id)
-            if current.status is TaskStatus.ORPHANED:
-                self.registry.transition_status(task.task_id, TaskStatus.RUNNING)
-            return adapter
-        except Exception:  # noqa: BLE001
-            if "adapter" in locals():
-                self._adapters.pop(task.task_id, None)
-                await _terminate_quietly(adapter)
-            logger.debug("Pi worker takeover failed for %s", task.task_id, exc_info=True)
-            return None
 
     async def _restart_from_session(
         self,
@@ -434,7 +360,7 @@ class TaskScheduler:
                     "command_timeout": self.command_timeout,
                 },
             )
-            adapter = _call_supported(self.adapter_factory, adapter_kwargs)
+            adapter = self.adapter_factory(**adapter_kwargs)
             await adapter.start()
             set_compaction = getattr(adapter, "set_auto_compaction", None)
             if callable(set_compaction):
@@ -531,7 +457,7 @@ class TaskScheduler:
                     "command_timeout": self.command_timeout,
                 },
             )
-            adapter = _call_supported(self.adapter_factory, adapter_kwargs)
+            adapter = self.adapter_factory(**adapter_kwargs)
             self._adapters[task.task_id] = adapter
             try:
                 # Keep the submit lock until startup is complete so shutdown
@@ -949,19 +875,6 @@ def _process_id(adapter: PiRpcAdapter) -> int | None:
     pid = getattr(process, "pid", None)
     return pid if isinstance(pid, int) else None
 
-
-def _call_supported(callable_obj: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
-    """Call older adapter factories without forcing optional keywords."""
-
-    try:
-        signature = inspect.signature(callable_obj)
-    except (TypeError, ValueError):
-        return callable_obj(**kwargs)
-    parameters = signature.parameters.values()
-    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
-        return callable_obj(**kwargs)
-    accepted = set(signature.parameters)
-    return callable_obj(**{key: value for key, value in kwargs.items() if key in accepted})
 
 
 async def _terminate_quietly(adapter: PiRpcAdapter) -> None:

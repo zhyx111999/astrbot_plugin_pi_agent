@@ -43,7 +43,7 @@ class FakeContext:
 class FakeStar:
     """Minimal stand-in for astrbot.api.star.Star."""
 
-    def __init__(self, context: FakeContext):
+    def __init__(self, context: FakeContext, config=None):
         pass
 
 

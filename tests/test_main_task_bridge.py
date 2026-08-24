@@ -140,7 +140,7 @@ async def test_pi_agent_uses_only_fixed_provider_and_model_descriptor(plugin):
             raise AssertionError("pi_agent must not inherit the current chat provider")
 
     plugin.plugin_config = {"pi_model": "gateway/provider-model"}
-    plugin.astrbot_adapter.context = Context()
+    plugin.context = Context()
     service = MagicMock()
     service.create_task = AsyncMock(return_value={"ok": True, "status": "queued"})
     plugin.pi_task_service = service
