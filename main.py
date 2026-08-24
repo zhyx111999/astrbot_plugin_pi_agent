@@ -1,7 +1,6 @@
 import json
 import inspect
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +29,7 @@ from pi_agent_bridge import (
     TaskRegistry,
 )
 from pi_agent_bridge.context import event_owner_key
+from pi_agent_bridge.normal_pipeline import enqueue_terminal_wakeup
 from pi_agent_bridge.provider import (
     PiModelSettings,
     PiProviderError,
@@ -263,35 +263,23 @@ class PiAgentPlugin(Star):
             )
 
         async def wake_terminal_task(task, reason: str) -> None:
-            """Wake AstrBot's native active agent for a Pi terminal task."""
+            """Relay a Pi terminal wakeup into AstrBot's normal event pipeline."""
 
-            cron_manager = getattr(self.astrbot_adapter.context, "cron_manager", None)
-            if cron_manager is None or not callable(getattr(cron_manager, "add_active_job", None)):
-                logger.warning("AstrBot active-agent scheduler unavailable for Pi task %s", task.task_id)
-                return
             status = task.status.value
             note = _terminal_wakeup_note(task.task_id, status, reason)
             try:
-                await cron_manager.add_active_job(
-                    name=f"Pi Agent terminal {task.task_id}",
-                    cron_expression=None,
-                    payload={
-                        "session": task.owner_key,
-                        "origin": "pi_agent",
-                        "pi_task_id": task.task_id,
-                        "pi_status": status,
-                        "pi_reason": reason,
-                        "note": note,
-                        "pi_reply_policy": "interpreted_user_reply_only",
-                    },
-                    description=note,
-                    enabled=True,
-                    persistent=True,
-                    run_once=True,
-                    run_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+                await enqueue_terminal_wakeup(
+                    context=self.astrbot_adapter.context,
+                    session_origin=task.owner_key,
+                    message=note,
                 )
             except Exception:  # noqa: BLE001
-                logger.exception("Failed to schedule Pi terminal wakeup for %s", task.task_id)
+                # Never fall back to direct Pi-content delivery. A host without
+                # the public event factory simply leaves the task readable.
+                logger.exception(
+                    "Failed to relay Pi terminal wakeup into normal pipeline for %s",
+                    task.task_id,
+                )
 
         try:
             scheduler = TaskScheduler(

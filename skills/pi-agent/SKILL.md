@@ -11,7 +11,7 @@ Pi is AstrBot's general-purpose Agent executor and the default executor for task
 
 Use `pi_agent` by default whenever the task involves tools, files, external information, execution, validation, or non-trivial reasoning, even if the task may be completed quickly. Only very simple one-turn conversation, such as a basic explanation, translation, short rewrite, or casual reply with no tool/file work, should stay in AstrBot's own Agent.
 
-Calling `pi_agent` returns a `task_id` immediately. When the task reaches completed, failed, cancelled, or orphaned, the plugin schedules an AstrBot native active-agent wakeup for the owning conversation. The awakened main model then reads the Pi session itself and decides whether to reply, send a file, or manage the task further. The plugin never sends the Pi result directly.
+Calling `pi_agent` returns a `task_id` immediately. When the task reaches completed, failed, cancelled, or orphaned, the plugin submits an AstrBot wake event into the owning conversation's normal event pipeline. The main model then reads the Pi session itself and decides whether to reply, send a file, or manage the task further. The plugin never sends the Pi result directly.
 
 ## Task Creation
 
@@ -21,7 +21,7 @@ The prompt must be a complete, self-contained task instruction. Include the targ
 
 At creation time, the new Pi session receives only the main model's complete, already-refined task request plus the selected model binding and explicit Pi runtime settings. AstrBot persona, full system prompts, conversation history, raw events, media context, and viewer context are not injected into the Pi session. Later inspection or management never injects any caller context.
 
-Terminal wakeups use AstrBot's native active-agent event. After reading a terminal Pi session, the awakened main Agent must never forward raw Pi session text, JSONL, tool logs, command output, internal status, or stack traces. If a user-visible reply is needed, send one concise, natural, interpreted reply; send files through `send_message_to_user` with a short explanation. If there is no meaningful user-visible result, do not send a message.
+Terminal wakeups are submitted through AstrBot's public event factory into the original session's normal event pipeline. After reading a terminal Pi session, the main Agent must never forward raw Pi session text, JSONL, tool logs, command output, internal status, or stack traces. If a user-visible reply is needed, produce one concise, natural, interpreted reply through the normal response pipeline; send files through the normal agent tools with a short explanation. If there is no meaningful user-visible result, do not send a message.
 
 ## AstrBot-Controlled Workflow
 
