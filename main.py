@@ -1,7 +1,11 @@
 import json
 import inspect
+import sys
 from pathlib import Path
 from typing import Any
+
+# AstrBot loads main.py directly; make sibling bridge packages importable.
+sys.path.insert(0, str(Path(__file__).parent))
 
 from pi_agent_bridge import (
     AstrBotAdapter,

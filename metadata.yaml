@@ -1,6 +1,6 @@
 name: astrbot_plugin_pi_agent
 display_name: Pi Agent
 desc: Yezi and Cz's open-source AstrBot Pi Agent plugin with isolated background tasks, native-session inspection, recovery, and normal-pipeline terminal replies.
-version: v0.2.6
+version: v0.2.7
 author: Yezi and Cz
 repo: https://github.com/zhyx111999/astrbot_plugin_pi_agent
