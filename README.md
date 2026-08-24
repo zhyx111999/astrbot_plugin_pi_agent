@@ -1,6 +1,6 @@
 # astrbot_plugin_pi_agent
 
-一个由 **Yezi 和 Cz** 独立维护的 AGPL-3.0 AstrBot 插件，将本地 [Pi](https://github.com/earendil-works/pi) 作为长任务 worker 接入 AstrBot。Pi 作为 AstrBot 的通用 Agent 执行器，适合处理代码、脚本、研究、自动化、文件操作、工具驱动流程以及其他长期、多步骤任务；AstrBot 负责分配、检查、读取和管理。
+一个由 **Yezi 和 Cz** 维护的开源 AstrBot 插件，将本地 [Pi](https://github.com/earendil-works/pi) 作为长任务 worker 接入 AstrBot。Pi 作为 AstrBot 的通用 Agent 执行器，适合处理代码、脚本、研究、自动化、文件操作、工具驱动流程以及其他长期、多步骤任务；AstrBot 负责分配、检查、读取和管理。
 
 它解决的是 AstrBot Agent 会话不适合长时间占用的问题：主模型调用 `pi_agent` 后立即拿到 `task_id`，Pi 在独立进程和独立 session 中继续工作；主模型可以在后续回合通过任务工具读取对应的 native session，同时正常处理当前会话的其他消息。
 
