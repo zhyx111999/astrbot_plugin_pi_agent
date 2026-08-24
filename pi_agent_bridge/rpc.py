@@ -134,6 +134,7 @@ _CHILD_ENVIRONMENT_KEYS = frozenset(
         "HOMEDRIVE",
         "HOMEPATH",
         "LANG",
+        "LD_PRELOAD",
         "LC_ALL",
         "LC_CTYPE",
         "LOCALAPPDATA",
@@ -143,6 +144,7 @@ _CHILD_ENVIRONMENT_KEYS = frozenset(
         "OS",
         "PATH",
         "PATHEXT",
+        "PROXYCHAINS_CONF_FILE",
         "SSL_CERT_DIR",
         "SSL_CERT_FILE",
         "SYSTEMROOT",
@@ -162,13 +164,25 @@ _RPC_STREAM_LIMIT = 16 * 1024 * 1024
 
 
 def _child_environment() -> dict[str, str]:
-    """Select process essentials without exposing host provider credentials."""
+    """Preserve runtime networking while excluding unrelated host secrets."""
 
-    return {
+    environment = {
         key: value
         for key, value in os.environ.items()
         if key.upper() in _CHILD_ENVIRONMENT_KEYS or key.upper().endswith("_PROXY")
     }
+    if environment.get("LD_PRELOAD") and not environment.get("PROXYCHAINS_CONF_FILE"):
+        home = Path(environment.get("HOME", "")).expanduser()
+        candidates = (
+            home / ".config/astrbot-proxy/proxychains.conf",
+            Path("/etc/proxychains4.conf"),
+            Path("/etc/proxychains.conf"),
+        )
+        for candidate in candidates:
+            if candidate.is_file():
+                environment["PROXYCHAINS_CONF_FILE"] = str(candidate)
+                break
+    return environment
 
 
 class PiRpcAdapter:

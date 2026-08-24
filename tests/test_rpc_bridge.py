@@ -9,7 +9,12 @@ from typing import Any
 
 import pytest
 
-from pi_agent_bridge.rpc import PiProcessState, PiRpcAdapter, PiRpcError
+from pi_agent_bridge.rpc import (
+    PiProcessState,
+    PiRpcAdapter,
+    PiRpcError,
+    _child_environment,
+)
 
 
 class FakeReader:
@@ -93,6 +98,19 @@ def factory(fake_process: FakeProcess):
 
     _factory.calls = calls  # type: ignore[attr-defined]
     return _factory
+
+
+def test_child_environment_preserves_proxychains_runtime(monkeypatch):
+    monkeypatch.setenv("LD_PRELOAD", "/usr/lib/libproxychains.so.4")
+    monkeypatch.setenv(
+        "PROXYCHAINS_CONF_FILE",
+        "/home/yezi/.config/astrbot-proxy/proxychains.conf",
+    )
+
+    environment = _child_environment()
+
+    assert environment["LD_PRELOAD"].endswith("libproxychains.so.4")
+    assert environment["PROXYCHAINS_CONF_FILE"].endswith("proxychains.conf")
 
 
 @pytest.mark.asyncio
