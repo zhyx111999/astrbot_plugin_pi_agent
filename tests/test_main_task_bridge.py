@@ -109,63 +109,6 @@ async def test_invalid_skill_path_does_not_block_plugin_service_creation(plugin,
 
 
 @pytest.mark.asyncio
-async def test_legacy_pi_error_event_is_returned_to_astrbot(plugin):
-    async def events():
-        yield {
-            "type": "event",
-            "event": {
-                "type": "message_end",
-                "message": {
-                    "stopReason": "error",
-                    "errorMessage": "OpenAI API error (502): upstream failed",
-                },
-            },
-        }
-        yield {"type": "event", "event": {"type": "agent_end", "messages": []}}
-
-    result = await plugin._collect_events(events())
-    assert "[Pi error] OpenAI API error (502): upstream failed" in result
-    assert "No response from pi" not in result
-
-
-def test_paginate_legacy_output(plugin, admin_event):
-    output = "x" * 8001
-    first = plugin._paginate_legacy_output(admin_event, output)
-    second = plugin._next_legacy_output_page(admin_event)
-    third = plugin._next_legacy_output_page(admin_event)
-
-    assert len(first) > 4000
-    assert "pi_legacy_output_next" in first
-    assert len(second) > 4000
-    assert "pi_legacy_output_next" in second
-    assert third == "x"
-
-
-@pytest.mark.asyncio
-async def test_task_access_is_owner_scoped_by_default(plugin, tmp_path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
-    owned = registry.create_task(owner_key="qq:owner", prompt="owned")
-    other = registry.create_task(owner_key="qq:other", prompt="other")
-    plugin._task_registry = registry
-    plugin.plugin_config = {"task_require_admin": False}
-
-    owner = _event("qq:owner")
-    outsider = _event("qq:other")
-    assert plugin._visible_task(owner, owned.task_id) is not None
-    assert plugin._visible_task(owner, other.task_id) is not None
-    assert plugin._manageable_task(owner, other.task_id) is None
-    assert plugin._manageable_task(outsider, other.task_id) is not None
-    registry.close()
-
-
-def test_admin_global_task_access_ignores_legacy_switch(plugin):
-    admin = _event("qq:admin", admin=True)
-    plugin.plugin_config = {"task_require_admin": False}
-    assert plugin._can_manage_all_tasks(admin) is True
-    assert plugin._can_manage_all_tasks(_event("qq:user")) is False
-
-
-@pytest.mark.asyncio
 async def test_pi_agent_sends_only_refined_request_and_descriptor(plugin):
     plugin.plugin_config = {
         "pi_model": "fixed-provider/fixed-model",

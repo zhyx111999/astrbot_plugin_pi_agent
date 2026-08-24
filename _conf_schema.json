@@ -2,7 +2,7 @@
   "enable_async_tasks": {
     "type": "bool",
     "description": "启用独立的 Pi 后台任务桥接",
-    "hint": "关闭后仍保留旧版 /pi 和 /pic 会话线路，不会创建 Pi 后台工作进程。",
+    "hint": "关闭后不会创建 Pi 后台工作进程。",
     "default": true
   },
   "pi_model": {
@@ -77,12 +77,6 @@
     "description": "Pi 额外采样参数 JSON",
     "hint": "可选 JSON 对象字符串，按 Pi models.json 的 samplingParams 原样传递；不要填 Provider 专属认证或上下文字段。",
     "default": ""
-  },
-  "pi_session_dir": {
-    "type": "string",
-    "description": "旧版 /pi 会话线路使用的 Pi 原生会话目录",
-    "hint": "默认使用 ~/.pi/agent/sessions。仅影响旧版 /pi 和 /pic 会话；后台任务始终使用独立的任务会话。",
-    "default": "~/.pi/agent/sessions"
   },
   "state_directory": {
     "type": "string",

@@ -941,7 +941,7 @@ def _process_id(adapter: PiRpcAdapter) -> int | None:
 
 
 def _call_supported(callable_obj: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
-    """Call legacy adapter factories without forcing new optional keywords."""
+    """Call older adapter factories without forcing optional keywords."""
 
     try:
         signature = inspect.signature(callable_obj)

@@ -51,9 +51,9 @@ The plugin does not create semantic progress summaries or automatically pause a 
 - `pi_task_cancel(task_id: string)`: Cancel a task while retaining its durable history.
 - `pi_task_delete(task_id: string)`: Delete a task and its managed resources.
 - `pi_session_list()`: List all registered async Pi sessions.
-- `pi_session_inspect(session_id: string)`: Read-only inspection of an async task session; legacy session inspection remains administrator-only.
+- `pi_session_inspect(session_id: string)`: Read-only inspection of an async task session.
 - `pi_session_resume(task_id: string)`: Resume an async task session without rebuilding its context.
-- `pi_session_delete(session_id: string)`: Delete an async task session or an administrator-only legacy session.
+- `pi_session_delete(session_id: string)`: Delete an async task session.
 - `pi_artifact_inspect(task_id: string)`: Read artifact metadata produced by a task.
 
 ## Permissions
@@ -71,7 +71,7 @@ Read and write permissions are separate:
 - Pi runtime behavior is controlled by plugin settings: `pi_thinking_level`, `pi_context_window`, `pi_max_output_tokens`, `pi_input_modalities`, `pi_temperature`, `pi_top_p`, `pi_top_k`, `pi_min_p`, and `pi_sampling_params`.
 - The selected AstrBot Provider supplies only the OpenAI-compatible connection, credentials, Provider binding, and model identity. Its reasoning, context, output, modality, sampling, cost, and compatibility fields are not copied automatically.
 - Empty or zero numeric plugin settings are omitted so Pi uses its own defaults.
-- Every new async and legacy Pi session enables Pi's native automatic context compaction; this is a Pi runtime setting and does not cause AstrBot to summarize or rewrite the session.
+- Every new Pi task enables Pi's native automatic context compaction; this is a Pi runtime setting and does not cause AstrBot to summarize or rewrite the session.
 - The new task receives only the main model's refined request. AstrBot persona, system prompt, conversation history, raw event, and media context are not copied into Pi.
 - `pi_task_read` reads only the recent native session tail by default. `pi_task_read_full` is the explicit complete-session path. The plugin does not build a second content history, summarize errors, classify progress, or extract results from either path.
 - Follow-ups add only the explicit message supplied by AstrBot; they do not copy the caller's full AstrBot context.
@@ -81,7 +81,3 @@ Read and write permissions are separate:
 ## Silent Worker Boundary
 
 Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer never wakes the main model and never sends completion, failure, progress, or idle notifications. `status` exposes task-control metadata; `poll` exposes a bounded raw session tail; `read` is the explicit larger native-session channel. A clean worker exit is converged to `completed`; a nonzero worker exit is `failed`.
-
-## Legacy Synchronous Route
-
-The legacy tools are synchronous and may wait for a Pi response. Use them only when the user explicitly asks for `/pi` or an existing interactive legacy session. Never use `pi_open_session` or `pi_send_message` for normal background delegation.

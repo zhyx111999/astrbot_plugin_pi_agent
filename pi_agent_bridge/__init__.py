@@ -1,8 +1,7 @@
 """Independent Pi Agent runtime adapters used by the task-oriented plugin.
 
-The ``pi_legacy`` package preserves the administrator-only interactive
-compatibility route. This package adapts Pi's public ``--mode rpc`` JSONL
-interface without modifying Pi or delivering messages into AstrBot chats.
+This package adapts Pi's public ``--mode rpc`` JSONL interface without
+modifying Pi or delivering messages into AstrBot chats.
 """
 
 from .rpc import (

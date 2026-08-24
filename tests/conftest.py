@@ -1,4 +1,4 @@
-"""Shared pytest fixtures and mocks for the pi_legacy test suite.
+"""Shared pytest fixtures and mocks for the Pi Agent test suite.
 
 This module sets up fake AstrBot public API modules so that `main.py` can be
 imported in tests without the full AstrBot runtime.
@@ -11,22 +11,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Shared test setup: must run before any pi_legacy import.
+# Shared test setup before importing plugin modules.
 # isort: off
 import _helpers  # noqa: F401
 # isort: on
 
-# Ensure the project root is on sys.path so pi_legacy can be imported.
+# Ensure the project root is on sys.path so plugin modules can be imported.
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-
-
-class FakePermissionType:
-    """Stand-in for astrbot.api.event.filter.PermissionType."""
-
-    ADMIN = "admin"
-    MEMBER = "member"
 
 
 class FakeAstrMessageEvent:
@@ -64,17 +57,6 @@ def _fake_command(name: str):
     return decorator
 
 
-def _fake_permission_type(permission_type, raise_error: bool = True):
-    """Decorator that records the required permission on the handler."""
-
-    def decorator(func):
-        func.__permission_type__ = permission_type
-        func.__permission_raise_error__ = raise_error
-        return func
-
-    return decorator
-
-
 def _fake_llm_tool(name: str | None = None, **kwargs):
     """Decorator that records the LLM tool name on the handler."""
 
@@ -87,13 +69,7 @@ def _fake_llm_tool(name: str | None = None, **kwargs):
 
 fake_filter = types.ModuleType("filter")
 fake_filter.command = _fake_command
-fake_filter.permission_type = _fake_permission_type
 fake_filter.llm_tool = _fake_llm_tool
-fake_filter.PermissionType = FakePermissionType
-
-fake_event_filter = types.ModuleType("astrbot.api.event.filter")
-fake_event_filter.PermissionType = FakePermissionType
-
 fake_event = types.ModuleType("astrbot.api.event")
 fake_event.AstrMessageEvent = FakeAstrMessageEvent
 fake_event.filter = fake_filter
@@ -114,7 +90,6 @@ fake_core.utils = fake_core_utils
 
 # Register the fake modules so `import main` can resolve without AstrBot installed.
 sys.modules["astrbot.api.event"] = fake_event
-sys.modules["astrbot.api.event.filter"] = fake_event_filter
 sys.modules["astrbot.api.star"] = fake_star
 sys.modules["astrbot.core"] = fake_core
 sys.modules["astrbot.core.utils"] = fake_core_utils
