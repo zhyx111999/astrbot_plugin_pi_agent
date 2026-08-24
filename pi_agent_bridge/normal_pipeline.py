@@ -60,9 +60,16 @@ async def enqueue_terminal_wakeup(
         type=session.message_type,
         self_id="astrbot",
         session_id=session.session_id,
+        # AstrBot's aiocqhttp event sender is also used by the normal
+        # response adapter as the private-chat destination. Keep the original
+        # session user here; a synthetic sender ID would make event.send()
+        # target the non-numeric ``astrbot_pi_agent`` marker instead of the
+        # actual user. The callback marker belongs in raw_message, not in the
+        # visible sender identity; otherwise the model receives an internal
+        # looking user ID and may treat the wakeup as non-user-facing.
         sender=MessageMember(
-            user_id="astrbot_pi_agent",
-            nickname="AstrBot Pi Agent",
+            user_id=session.session_id,
+            nickname="用户",
         ),
         message=[Plain(message)],
         message_str=message,
