@@ -72,7 +72,7 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | --- | ---: | --- |
 | `enable_async_tasks` | `true` | 开启观察式后台任务桥。关闭后只保留旧 `/pi`、`/pic` 线路。 |
 | `pi_model` | `""` | 只选择一个 AstrBot 已配置的 Provider/model 绑定；不再从这里读取或覆盖 Pi 的推理、上下文、输出和采样参数。 |
-| `pi_thinking_level` | `medium` | Pi 官方 thinking level：`off`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。 |
+| `pi_thinking_level` | `max` | Pi 官方 thinking level：`off`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。当前两个 gpt-5.6 模型均使用 `max`。 |
 | `pi_context_window` | `0` | Pi 上下文窗口；0 表示不写入，由 Pi 默认值决定。 |
 | `pi_max_output_tokens` | `0` | Pi 最大输出 token；0 表示不写入，由 Pi 默认值决定。 |
 | `pi_input_modalities` | `["text", "image"]` | Pi 模型输入模态。当前支持 text/image。 |

@@ -27,7 +27,7 @@ class PiWorkerConfig:
     skill_paths: tuple[str, ...] = ()
     extension_paths: tuple[str, ...] = ()
     agent_dir: str | None = None
-    thinking_level: str = "medium"
+    thinking_level: str = "max"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "provider", _optional_text(self.provider))
@@ -36,7 +36,7 @@ class PiWorkerConfig:
         object.__setattr__(self, "skill_paths", _paths(self.skill_paths))
         object.__setattr__(self, "extension_paths", _paths(self.extension_paths))
         object.__setattr__(self, "agent_dir", _optional_text(self.agent_dir))
-        object.__setattr__(self, "thinking_level", _optional_text(self.thinking_level) or "medium")
+        object.__setattr__(self, "thinking_level", _optional_text(self.thinking_level) or "max")
 
 
 WorkerConfigFactory = Callable[
@@ -106,7 +106,7 @@ def worker_config_from_descriptor(
         agent_dir=descriptor.get("agent_dir"),
         skill_paths=tuple(descriptor.get("skill_paths") or ()),
         extension_paths=tuple(descriptor.get("extension_paths") or ()),
-        thinking_level=descriptor.get("thinking_level", "medium"),
+        thinking_level=descriptor.get("thinking_level", "max"),
     )
 
 

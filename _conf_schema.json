@@ -17,7 +17,7 @@
     "description": "Pi 推理强度",
     "hint": "只控制 Pi 当前任务的 thinking level，不读取 AstrBot Provider 的推理配置。GPT-5.6 等模型支持的档位由 Pi 官方处理。",
     "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-    "default": "medium"
+    "default": "max"
   },
   "pi_context_window": {
     "type": "int",

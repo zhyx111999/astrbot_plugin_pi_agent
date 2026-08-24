@@ -41,7 +41,7 @@ def test_descriptor_omits_environment_values() -> None:
         "skill_paths": ["/skills/research"],
         "extension_paths": ["/extensions/tools"],
         "environment_keys": ["PI_API_KEY", "PI_ORG"],
-        "thinking_level": "medium",
+        "thinking_level": "max",
     }
     serialized = json.dumps(descriptor)
     assert "environment" not in descriptor

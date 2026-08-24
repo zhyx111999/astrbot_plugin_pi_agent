@@ -77,6 +77,31 @@ def test_binding_writes_only_variable_references(tmp_path):
     assert "compat" not in model_entry
     assert "api-secret" not in models
     assert "tenant-secret" not in models
+def test_gpt56_models_declare_xhigh_and_max_mapping(tmp_path):
+    class Provider:
+        provider_config = {
+            "type": "openai_responses",
+            "api_base": "https://gateway.example/v1",
+        }
+
+        def meta(self):
+            return SimpleNamespace(model="gpt-5.6-terra", type="openai_responses")
+
+        def get_current_key(self):
+            return "secret"
+
+    binding = build_provider_binding(
+        provider_id="yezi", provider=Provider(), agent_dir=tmp_path / "agent"
+    )
+    payload = json.loads(
+        (tmp_path / "agent" / "models.json").read_text(encoding="utf-8")
+    )
+    assert payload["providers"][binding.pi_provider_id]["models"][0]["thinkingLevelMap"] == {
+        "xhigh": "xhigh",
+        "max": "max",
+    }
+
+
 def test_non_openai_provider_is_rejected(tmp_path):
     class Provider:
         provider_config = {

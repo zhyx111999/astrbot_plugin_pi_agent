@@ -35,7 +35,7 @@ class PiProviderBinding:
 class PiModelSettings:
     """Explicit Pi runtime controls owned by the plugin configuration."""
 
-    thinking_level: str = "medium"
+    thinking_level: str = "max"
     context_window: int | None = None
     max_output_tokens: int | None = None
     input_modalities: tuple[str, ...] = ("text", "image")
@@ -46,7 +46,7 @@ class PiModelSettings:
     sampling_params: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        level = str(self.thinking_level or "medium").strip().lower()
+        level = str(self.thinking_level or "max").strip().lower()
         if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError(f"unsupported pi_thinking_level: {level}")
         modalities = tuple(
@@ -73,7 +73,7 @@ class PiModelSettings:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "PiModelSettings":
         return cls(
-            thinking_level=value.get("thinking_level", "medium"),
+            thinking_level=value.get("thinking_level", "max"),
             context_window=_positive_int(value.get("context_window")),
             max_output_tokens=_positive_int(value.get("max_output_tokens")),
             input_modalities=tuple(value.get("input_modalities") or ("text", "image")),
@@ -87,7 +87,7 @@ class PiModelSettings:
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "PiModelSettings":
         return cls(
-            thinking_level=config.get("pi_thinking_level", "medium"),
+            thinking_level=config.get("pi_thinking_level", "max"),
             context_window=_positive_int(config.get("pi_context_window")),
             max_output_tokens=_positive_int(config.get("pi_max_output_tokens")),
             input_modalities=tuple(config.get("pi_input_modalities") or ("text", "image")),
@@ -144,6 +144,9 @@ _OPENAI_COMPATIBLE_TYPES = frozenset(
     }
 )
 _RESPONSES_TYPES = frozenset({"openai_responses"})
+_GPT56_THINKING_LEVEL_MAP = {"xhigh": "xhigh", "max": "max"}
+
+
 def build_provider_binding(
     *,
     provider_id: str,
@@ -259,6 +262,8 @@ def _build_model_entry(
         sampling["topK"] = settings.top_k
     if settings.min_p is not None:
         sampling["minP"] = settings.min_p
+    if model in {"gpt-5.6-terra", "gpt-5.6-sol"}:
+        entry["thinkingLevelMap"] = dict(_GPT56_THINKING_LEVEL_MAP)
     if sampling:
         entry["samplingParams"] = sampling
     return entry

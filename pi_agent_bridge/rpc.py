@@ -700,7 +700,7 @@ class PiRpcAdapter:
     async def set_thinking_level(self, level: str) -> dict[str, Any]:
         """Set Pi's explicit reasoning level for the current session."""
 
-        normalized = str(level or "medium").strip().lower()
+        normalized = str(level or "max").strip().lower()
         if normalized not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError(f"unsupported thinking level: {normalized}")
         return await self._send_and_wait(
