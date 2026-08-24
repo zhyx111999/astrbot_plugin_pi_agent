@@ -643,6 +643,9 @@ class TaskScheduler:
             await self._release_terminal_worker(task_id, adapter)
         return updated
 
+    async def notify_terminal_task(self, task: TaskRecord, *, reason: str) -> None:
+        await self._notify_terminal_task(task, reason=reason)
+
     async def _notify_terminal_task(self, task: TaskRecord, *, reason: str) -> None:
         if self.terminal_task_callback is None:
             return

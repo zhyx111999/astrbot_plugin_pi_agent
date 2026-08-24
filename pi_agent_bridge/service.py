@@ -116,6 +116,12 @@ class PiTaskService:
             raise
         except Exception as exc:  # noqa: BLE001
             self._mark_start_failure(task_id, exc)
+            try:
+                await self.scheduler.notify_terminal_task(
+                    self.registry.get_task(task_id), reason="worker_start_failed"
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     def _discard_launch(self, launch: asyncio.Task[None]) -> None:
         self._launch_tasks.discard(launch)
