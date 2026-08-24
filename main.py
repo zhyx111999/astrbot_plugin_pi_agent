@@ -1,6 +1,7 @@
 import json
 import inspect
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -253,6 +254,39 @@ class PiAgentPlugin(Star):
                 thinking_level=settings.thinking_level,
             )
 
+        async def wake_terminal_task(task, reason: str) -> None:
+            """Wake AstrBot's native active agent for a Pi terminal task."""
+
+            cron_manager = getattr(self.astrbot_adapter.context, "cron_manager", None)
+            if cron_manager is None or not callable(getattr(cron_manager, "add_active_job", None)):
+                logger.warning("AstrBot active-agent scheduler unavailable for Pi task %s", task.task_id)
+                return
+            status = task.status.value
+            note = (
+                f"后台 Pi Agent 任务已进入终态：{status}。"
+                f"任务 ID：{task.task_id}。"
+                "请读取该任务的 Pi 原生会话并根据用户需求决定是否回复或继续管理。"
+            )
+            try:
+                await cron_manager.add_active_job(
+                    name=f"Pi Agent terminal {task.task_id}",
+                    cron_expression=None,
+                    payload={
+                        "session": task.owner_key,
+                        "origin": "pi_agent",
+                        "pi_task_id": task.task_id,
+                        "pi_status": status,
+                        "pi_reason": reason,
+                    },
+                    description=note,
+                    enabled=True,
+                    persistent=True,
+                    run_once=True,
+                    run_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to schedule Pi terminal wakeup for %s", task.task_id)
+
         try:
             scheduler = TaskScheduler(
                 registry,
@@ -274,6 +308,7 @@ class PiAgentPlugin(Star):
                     self._config_value("session_retention_hours", 24)
                 ),
                 session_root=state_root / "sessions",
+                terminal_task_callback=wake_terminal_task,
             )
             await scheduler.start()
         except Exception:
@@ -944,21 +979,22 @@ class PiAgentPlugin(Star):
         prompt: str,
         workspace: str = "",
     ) -> str:
-        """Use Pi as AstrBot's general-purpose Agent executor for long-running work.
+        """Use Pi Agent as an independent general-purpose Agent tool.
 
-        Pi is a versatile Agent that can handle code, scripts, research,
-        automation, file operations, tool-driven workflows, and other
-        long-running or multi-step work in an isolated worker. Use it for
-        sustained research, coding, testing, multi-agent work, or tasks that
-        should run in the background while AstrBot continues handling the main
-        conversation. This call returns a task_id immediately.
+        Pi Agent is the default executor for any task that is not extremely
+        simple and purely conversational. It can independently complete code,
+        scripts, research, automation, file operations, testing, media/file
+        handling, tool-driven workflows, and other work in an isolated worker.
+        Prefer this tool whenever the task involves tools, files, external
+        information, execution, validation, or any non-trivial reasoning.
+        Give it a complete objective and constraints; it executes the work
+        instead of merely explaining how to do it.
 
-        IMPORTANT: After this tool returns, end the current AstrBot tool loop
-        and answer the user. Do not call pi_task_poll, pi_task_status, or
-        pi_task_read in the same turn. Check the task only in a later model
-        turn when the user asks or when a new user message requires it.
-
-        Simple questions and short tool calls belong to AstrBot.
+        This tool returns a task_id immediately. After it returns, end the
+        current AstrBot tool loop. Do not inspect the task in the same turn.
+        Only very simple one-turn conversation, such as a basic explanation,
+        translation, short rewrite, or casual reply with no tool/file work,
+        should stay in AstrBot's own Agent.
 
         Args:
             prompt(string): Complete task instruction for the delegated worker
@@ -1028,11 +1064,11 @@ class PiAgentPlugin(Star):
 
     @filter.llm_tool(name="pi_task_status")
     async def pi_task_status(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Read AstrBot task and native-session metadata without session content.
+        """Inspect metadata for a task previously created by pi_agent.
 
-        This is read-only. After this tool returns, end the current tool loop.
-        Do not call another Pi task tool in the same turn unless the user
-        explicitly requested a specific follow-up operation.
+        This is a supporting read-only tool, not an Agent execution tool.
+        After it returns, end the current tool loop; do not chain another
+        Pi inspection call in the same turn.
 
         Args:
             task_id(string): Task id returned by pi_agent
@@ -1048,11 +1084,11 @@ class PiAgentPlugin(Star):
 
     @filter.llm_tool(name="pi_task_list")
     async def pi_task_list(self, event: AstrMessageEvent) -> str:
-        """List every registered Pi task for AstrBot to select and manage.
+        """Find tasks previously created by pi_agent.
 
-        This is a directory lookup only. After this tool returns, end the
-        current tool loop and select a task in a later turn if needed. Do not
-        chain list -> poll -> read in one turn.
+        This is a supporting directory tool used to select an existing Agent
+        task. It does not execute work. After it returns, end the current tool
+        loop; do not chain list -> poll -> read in one turn.
         """
         operation = "task_list"
         if denied := self._require_task_permission(event):
@@ -1067,12 +1103,12 @@ class PiAgentPlugin(Star):
     async def pi_task_read(
         self, event: AstrMessageEvent, task_id: str
     ) -> str:
-        """Read the recent tail of the selected task's native Pi session.
+        """Read the recent context of a pi_agent task for AstrBot.
 
-        The normal read returns at most 50,000 characters from the session
-        tail. It does not summarize, classify, or rewrite the session. Use
-        pi_task_read_full only when the user explicitly requests the full
-        session.
+        This supporting inspection tool returns at most 50,000 characters
+        from the native session tail without summarizing or rewriting it.
+        Use pi_task_read_full only when the user explicitly asks for the
+        complete session, then end the current tool loop.
 
         After this tool returns, end the current AstrBot tool loop. Do not
         immediately call poll, status, result, or read again in the same turn.
@@ -1120,10 +1156,10 @@ class PiAgentPlugin(Star):
     async def pi_task_result(
         self, event: AstrMessageEvent, task_id: str, offset: int = 0, limit: int = 100
     ) -> str:
-        """Compatibility alias for pi_task_read; return native session lines.
+        """Compatibility reader for a task previously created by pi_agent.
 
-        This is not a summarized final-answer endpoint. AstrBot reads and
-        interprets the selected Pi session itself.
+        This is not an Agent execution tool or a summarized result endpoint.
+        Use pi_task_read for normal inspection and end the current tool loop.
 
         After this tool returns, end the current AstrBot tool loop. Do not
         chain another Pi inspection call in the same turn.

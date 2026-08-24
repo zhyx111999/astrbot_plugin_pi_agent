@@ -80,6 +80,8 @@ class TaskScheduler:
         agent_root: str | Path | None = None,
         worker_config_factory: WorkerConfigFactory | None = None,
         process_probe: ProcessProbe = _is_process_alive,
+        terminal_task_callback: Callable[[TaskRecord, str], Awaitable[Any] | Any]
+        | None = None,
     ) -> None:
         if poll_interval_seconds < 1:
             raise ValueError("poll_interval_seconds must be at least 1")
@@ -120,6 +122,8 @@ class TaskScheduler:
         self.session_retention_hours = session_retention_hours
         self.process_probe = process_probe
         self.worker_config_factory = worker_config_factory
+        self.terminal_task_callback = terminal_task_callback
+        self._terminal_notified: set[tuple[str, str]] = set()
         self._last_observed_at: dict[str, float] = {}
         self._observation_locks: dict[str, asyncio.Lock] = {}
 
@@ -300,16 +304,20 @@ class TaskScheduler:
 
     async def _recover_task(self, task: TaskRecord) -> PiRpcAdapter | None:
         if task.process_id is None or not self.process_probe(task.process_id):
-            self._mark_orphaned(task.task_id, "Pi worker is no longer alive after restart")
+            orphaned = self._mark_orphaned(task.task_id, "Pi worker is no longer alive after restart")
+            if orphaned is not None:
+                await self._notify_terminal_task(orphaned, reason="worker_orphaned")
             return None
 
         adapter = await self._try_take_over(task)
         if adapter is not None:
             return adapter
-        self._mark_orphaned(
+        orphaned = self._mark_orphaned(
             task.task_id,
             "Pi worker is alive but its RPC transport cannot be reattached",
         )
+        if orphaned is not None:
+            await self._notify_terminal_task(orphaned, reason="worker_orphaned")
         return None
 
     async def _try_take_over(self, task: TaskRecord) -> PiRpcAdapter | None:
@@ -606,7 +614,9 @@ class TaskScheduler:
         if adapter is None:
             if task.status is TaskStatus.RUNNING:
                 try:
-                    return self.registry.transition_status(task_id, TaskStatus.ORPHANED)
+                    orphaned = self.registry.transition_status(task_id, TaskStatus.ORPHANED)
+                    await self._notify_terminal_task(orphaned, reason="worker_orphaned")
+                    return orphaned
                 except InvalidTaskTransition:
                     return self.registry.get_task(task_id)
             return task
@@ -628,7 +638,21 @@ class TaskScheduler:
             updated = self.registry.transition_status(task_id, TaskStatus.FAILED)
         elif agent_finished and updated.status in _ACTIVE_STATUSES:
             updated = self.registry.transition_status(task_id, TaskStatus.COMPLETED)
+        if updated.status in _TERMINAL_STATUSES:
+            await self._notify_terminal_task(updated, reason="worker_terminal")
+            await self._release_terminal_worker(task_id, adapter)
         return updated
+
+    async def _notify_terminal_task(self, task: TaskRecord, *, reason: str) -> None:
+        if self.terminal_task_callback is None:
+            return
+        key = (task.task_id, task.status.value)
+        if key in self._terminal_notified:
+            return
+        self._terminal_notified.add(key)
+        result = self.terminal_task_callback(task, reason)
+        if inspect.isawaitable(result):
+            await result
 
     async def _poll_pi_state(
         self, adapter: PiRpcAdapter
@@ -700,6 +724,7 @@ class TaskScheduler:
                 await self._release_terminal_worker(task_id, adapter)
         if task.status not in _TERMINAL_STATUSES:
             task = self.registry.transition_status(task_id, TaskStatus.CANCELLED)
+            await self._notify_terminal_task(task, reason="cancelled")
         if cancel_error is not None:
             raise PiRpcError(f"Pi cancel acknowledgement failed: {safe_error_summary(cancel_error)}") from cancel_error
         return task

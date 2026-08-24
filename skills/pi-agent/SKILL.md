@@ -7,9 +7,11 @@ description: Use Pi as AstrBot's general-purpose Agent executor for code, script
 
 ## Core Role
 
-Pi is AstrBot's general-purpose Agent executor and an isolated worker for long-running or multi-step work. It can handle code, scripts, research, automation, file operations, tool-driven workflows, and other engineering or knowledge tasks. Use it for sustained research, coding, testing, multi-agent work, or tasks that should run in the background while AstrBot continues handling other messages.
+Pi is AstrBot's general-purpose Agent executor and the default executor for tasks that are not extremely simple and purely conversational. It can handle code, scripts, research, automation, file operations, media/file handling, testing, tool-driven workflows, and other engineering or knowledge tasks.
 
-Calling `pi_agent` returns a `task_id` immediately. AstrBot then uses the task tools to inspect, read, and manage the delegated work. Simple questions and short tool calls belong to AstrBot's own agent.
+Use `pi_agent` by default whenever the task involves tools, files, external information, execution, validation, or non-trivial reasoning, even if the task may be completed quickly. Only very simple one-turn conversation, such as a basic explanation, translation, short rewrite, or casual reply with no tool/file work, should stay in AstrBot's own Agent.
+
+Calling `pi_agent` returns a `task_id` immediately. When the task reaches completed, failed, cancelled, or orphaned, the plugin schedules an AstrBot native active-agent wakeup for the owning conversation. The awakened main model then reads the Pi session itself and decides whether to reply, send a file, or manage the task further. The plugin never sends the Pi result directly.
 
 ## Task Creation
 
@@ -31,7 +33,7 @@ At creation time, the new task receives a one-time snapshot of the current AstrB
 8. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
 9. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
-The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again.
+The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again. Terminal wakeups are only for completed, failed, cancelled, and orphaned states.
 
 ## Async Task Tools
 

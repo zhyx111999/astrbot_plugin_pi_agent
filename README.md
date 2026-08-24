@@ -10,7 +10,7 @@
 - **不占用当前 AstrBot 工具调用**：Pi 的 JSONL stdin/stdout 由后台 worker 处理，不把长任务包在一次 AstrBot 工具调用里。
 - **没有硬超时和空闲超时**：插件不会因为任务运行超过 900 秒、某段时间没有输出，或一次观察调用较慢而杀死 Pi。
 - **AstrBot 主动检查**：Pi worker 的 stdout JSONL 只由插件用于维持 RPC/worker 生命周期；`pi_task_status` 不返回 Pi 内容，`pi_task_poll` 才按 AstrBot 的调用显式请求一次短状态检查。
-- **Pi 完全静默**：没有完成、失败、进度或无输出通知，后台 observer 不向任何 AstrBot 会话发送消息，也不唤醒主模型。
+- **Pi 完全静默**：Pi 不向任何 AstrBot 会话发送内容；任务进入 completed、failed、cancelled 或 orphaned 后，插件只创建 AstrBot 原生 active-agent 唤醒事件，由主模型自己读取 Pi session 并决定是否回复或发送文件。
 - **原生会话直接读取**：`pi_task_read` 默认只读取对应 Pi 原生 session JSONL 最近 50,000 个字符；用户明确要求完整会话时使用 `pi_task_read_full`。插件不构造第二份内容历史，不提炼摘要，不解释错误，AstrBot 自己读取和解析会话。
 - **读写权限分离**：普通用户可以列出、检查、轮询和读取全部登记任务；只有任务 owner 或 AstrBot 管理员可以 follow-up、resume、cancel、delete。管理员始终可以管理全部任务。
 - **任务彼此隔离**：每个任务有独立进程、Pi session、工作区、事件游标和 registry 记录，同一 AstrBot 会话可同时运行多个 Pi 任务。
@@ -44,6 +44,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - `pi_agent_bridge/artifacts.py`：保留兼容模块；新异步任务不自动扫描或提炼 workspace 内容。
 - `pi_agent_bridge/wakeup.py`：为将来可用的主模型唤醒入口保留适配边界；没有公开唤醒 API 时不主动触发主模型。
 - Pi native session 自动压缩：异步和 legacy 新会话都会启用 Pi 官方 `set_auto_compaction`，避免长期上下文无限膨胀。
+- Pi 终态唤醒：任务完成、失败、取消或失联时，插件通过 AstrBot 的 active-agent scheduler 唤醒原会话主模型；插件不直接发送 Pi 内容。
 
 ## 环境要求
 
@@ -144,12 +145,16 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 
 ### 任务分工建议
 
-主模型应把普通问答、简单改写和一次短工具调用留在 AstrBot 自己的 Agent。以下情况适合使用 `pi_agent`：
+主模型默认应把除极简单纯对话外的任务交给 `pi_agent`。以下情况应优先使用 `pi_agent`，即使任务预计很快完成：
 
-- 需要多步研究、编码、测试或文件修改；
-- 预计超过一次工具调用，或需要独立工作区；
-- 需要并行的独立子任务；
-- 用户明确要求后台持续执行。
+- 任何代码、脚本、测试、调试或文件修改；
+- 需要读取或写入文件、媒体或工作区；
+- 需要联网研究、资料整理或事实核验；
+- 需要调用工具、执行命令或进行结果验证；
+- 需要自动化、多代理或独立工作环境；
+- 用户要求执行、制作、处理或完成某项具体工作。
+
+只有基础解释、简单翻译、短句改写和不涉及工具/文件的普通闲聊，才留给 AstrBot 自己处理。
 
 调用 `pi_agent` 后必须立即结束当前 AstrBot tool loop，不要在同一回合调用 `pi_task_poll`、`pi_task_status` 或 `pi_task_read`。后续用户回合需要查询时，最多调用一次 list/status/poll/read，工具返回后再次结束当前回合；不要因为状态是 `running` 就在同一回合重复轮询。legacy `pi_open_session` 和 `pi_send_message` 是可能等待 Pi 回复的同步兼容线路，只有用户明确要求 `/pi` 或已有交互 session 时才使用，后台任务必须使用 `pi_agent`。
 
