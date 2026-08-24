@@ -141,18 +141,6 @@
     "hint": "这不是任务硬超时，也不是空闲超时。它限制 poll/observer 的 get_state 请求，以及 steer、cancel、resume 等短控制操作的确认时间。",
     "default": 10.0
   },
-  "inherit_persona": {
-    "type": "bool",
-    "description": "将当前 AstrBot 人设复制到新建的 Pi 任务",
-    "hint": "创建任务时会复制人设、当前事件的公开字段和源消息。之后的新聊天消息不会自动同步，请使用 pi_task_follow_up 追加要求。",
-    "default": true
-  },
-  "media_capture_timeout_seconds": {
-    "type": "float",
-    "description": "复制单个事件媒体组件到任务工作区的超时时间",
-    "hint": "此项只限制任务创建时的媒体准备过程，不是 Pi 任务超时。转换失败时会作为媒体捕获警告返回。",
-    "default": 10.0
-  },
   "pi_skill_paths": {
     "type": "list",
     "description": "追加的 Pi Skill 目录",

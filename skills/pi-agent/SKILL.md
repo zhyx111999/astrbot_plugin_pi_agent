@@ -19,7 +19,7 @@ Call `pi_agent(prompt, workspace?)` when the requested work is long-running, mul
 
 The prompt must be a complete, self-contained task instruction. Include the target repository or files, desired behavior, constraints, validation requirements, and expected artifacts when known. The call returns a `task_id` immediately and does not wait for Pi to finish.
 
-At creation time, the new task receives a one-time snapshot of the current AstrBot persona, conversation history, triggering event, user message, available media, and the configured fixed Provider/model. This snapshot belongs to that task's new Pi session. Later inspection, polling, reading, or management by another user never injects the caller's persona, conversation, event, or model into the existing session.
+At creation time, the new Pi session receives only the main model's complete, already-refined task request plus the selected model binding and explicit Pi runtime settings. AstrBot persona, full system prompts, conversation history, raw events, media context, and viewer context are not injected into the Pi session. Later inspection or management never injects any caller context.
 
 ## AstrBot-Controlled Workflow
 
@@ -70,7 +70,7 @@ Read and write permissions are separate:
 - The selected AstrBot Provider supplies only the OpenAI-compatible connection, credentials, Provider binding, and model identity. Its reasoning, context, output, modality, sampling, cost, and compatibility fields are not copied automatically.
 - Empty or zero numeric plugin settings are omitted so Pi uses its own defaults.
 - Every new async and legacy Pi session enables Pi's native automatic context compaction; this is a Pi runtime setting and does not cause AstrBot to summarize or rewrite the session.
-- The new task gets the current AstrBot persona, conversation, event, user message, and available media as a creation-time snapshot only.
+- The new task receives only the main model's refined request. AstrBot persona, system prompt, conversation history, raw event, and media context are not copied into Pi.
 - `pi_task_read` reads only the recent native session tail by default. `pi_task_read_full` is the explicit complete-session path. The plugin does not build a second content history, summarize errors, classify progress, or extract results from either path.
 - Follow-ups add only the explicit message supplied by AstrBot; they do not copy the caller's full AstrBot context.
 - AstrBot tools, MCP servers, Skills, and extensions are not inherited automatically. Only paths explicitly configured in `pi_skill_paths` and `pi_extension_paths` are passed to Pi. Pi built-in tools remain enabled.

@@ -39,7 +39,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、session 路径、进程信息、生命周期和 retention。
 - `pi_agent_bridge/scheduler.py`：并发限制、后台观察、worker 生命周期和重启接管。
 - `pi_agent_bridge/service.py`：给 AstrBot 工具使用的任务控制、50,000 字符 recent-tail 读取和 full-session 读取 facade。
-- `pi_agent_bridge/context.py`：创建任务时构造人设、当前事件公开字段和原始消息的一次性快照。
+- `pi_agent_bridge/context.py`：构造仅包含主模型整理后任务请求的 Pi 初始 prompt；不读取 AstrBot 人设、历史、事件或媒体上下文。
 - `pi_agent_bridge/provider.py`：读取 AstrBot 选定 Provider 的连接地址、鉴权和模型绑定；将插件显式配置的 PiModelSettings 写入任务专属 Pi `models.json`。
 - `pi_agent_bridge/artifacts.py`：保留兼容模块；新异步任务不自动扫描或提炼 workspace 内容。
 - `pi_agent_bridge/wakeup.py`：为将来可用的主模型唤醒入口保留适配边界；没有公开唤醒 API 时不主动触发主模型。
@@ -89,7 +89,6 @@ git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plug
 | `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和 artifact。活动/暂停/orphaned 任务不被误删。 |
 | `max_concurrent_tasks` | `4` | 同时运行的独立 Pi worker 数量。 |
 | `command_timeout_seconds` | `10` | 仅限制 poll/observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；不是任务硬超时或空闲超时。 |
-| `inherit_persona` | `true` | 创建时复制主 Agent 人设；任务 prompt 同时保存当前事件的公开字段和原始消息快照。之后不会自动同步新消息。 |
 | `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个路径单独一项，填写包含 `SKILL.md` 的目录绝对路径。 |
 | `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
 | `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |

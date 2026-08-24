@@ -6,7 +6,7 @@ import _helpers  # noqa: F401
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -156,19 +156,22 @@ def test_admin_global_task_access_ignores_legacy_switch(plugin):
 
 
 @pytest.mark.asyncio
-async def test_pi_agent_can_disable_persona_inheritance(plugin):
+async def test_pi_agent_sends_only_refined_request_and_descriptor(plugin):
     plugin.plugin_config = {
-        "inherit_persona": False,
         "pi_model": "fixed-provider/fixed-model",
+        "pi_thinking_level": "high",
     }
     service = MagicMock()
     service.create_task = AsyncMock(return_value={"ok": True, "status": "queued"})
     plugin.pi_task_service = service
-    event = _event("qq:owner")
-    with patch.object(plugin, "_current_persona") as persona:
-        await plugin.pi_agent(event, "research")
-    persona.assert_not_called()
-    assert service.create_task.await_args.kwargs["persona"] is None
+    await plugin.pi_agent(_event("qq:owner"), "整理这个请求并执行它")
+
+    kwargs = service.create_task.await_args.kwargs
+    assert kwargs["task"] == "整理这个请求并执行它"
+    assert "persona" not in kwargs
+    assert "media_references" not in kwargs
+    assert set(kwargs["context"]) == {WORKER_DESCRIPTOR_KEY}
+    assert kwargs["context"][WORKER_DESCRIPTOR_KEY]["model_settings"]["thinking_level"] == "high"
 
 
 @pytest.mark.asyncio

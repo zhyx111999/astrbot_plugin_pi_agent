@@ -25,12 +25,11 @@ from pi_legacy.commands import (
 )
 from pi_agent_bridge import (
     AstrBotAdapter,
-    AstrBotContextAdapter,
     PiTaskService,
     TaskScheduler,
     TaskRegistry,
-    capture_task_context,
 )
+from pi_agent_bridge.context import event_owner_key
 from pi_agent_bridge.provider import (
     PiModelSettings,
     PiProviderError,
@@ -103,12 +102,6 @@ class PiAgentPlugin(Star):
             super().__init__(context)
         self.plugin_config = config if config is not None else {}
         self.astrbot_adapter = AstrBotAdapter(context, self.plugin_config)
-        self.astrbot_context_adapter = AstrBotContextAdapter(
-            context,
-            media_timeout_seconds=float(
-                self._config_value("media_capture_timeout_seconds", 10.0)
-            ),
-        )
         # Use pi's native session directory so sessions are shared with the
         # pi CLI and any other pi clients. This can be made configurable later
         # if per-plugin isolation is desired.
@@ -358,7 +351,7 @@ class PiAgentPlugin(Star):
         return event.is_admin()
 
     def _task_owner_key(self, event: AstrMessageEvent) -> str:
-        return capture_task_context(event).owner_key
+        return event_owner_key(event)
 
     def _task_is_visible(self, event: AstrMessageEvent, task) -> bool:
         """Every registered task is readable; writes are owner/admin-only."""
@@ -463,30 +456,6 @@ class PiAgentPlugin(Star):
             action = "manage" if write else "read"
             raise PermissionError(f"You do not have permission to {action} this Pi task")
         return service
-
-    def _current_persona(self, event: AstrMessageEvent) -> str | None:
-        """Best-effort persona snapshot using the public context/config surface."""
-
-        context = self.astrbot_adapter.context
-        manager = getattr(context, "persona_manager", None)
-        if manager is None:
-            return None
-        try:
-            umo = getattr(event, "unified_msg_origin", "")
-            if callable(umo):
-                umo = umo()
-            config = context.get_config(umo=umo) if umo else context.get_config()
-            settings = config.get("provider_settings", {}) if config else {}
-            persona_id = settings.get("default_personality")
-            getter = getattr(manager, "get_persona_v3_by_id", None)
-            persona = getter(persona_id) if callable(getter) else None
-            if isinstance(persona, dict):
-                prompt = persona.get("prompt")
-            else:
-                prompt = getattr(persona, "prompt", None)
-            return prompt.strip() if isinstance(prompt, str) and prompt.strip() else None
-        except Exception:  # noqa: BLE001
-            return None
 
     # ------------------------------------------------------------------
     # Command parsing helpers
@@ -1012,7 +981,7 @@ class PiAgentPlugin(Star):
                     "请先在 pi_model 中选择 AstrBot 已配置的模型",
                 )
             service = await self._task_service_or_error()
-            context = capture_task_context(event)
+            owner_key = event_owner_key(event)
             mcp_paths = self._config_value("pi_mcp_config_paths", [])
             if mcp_paths:
                 return self._bridge_error(
@@ -1027,36 +996,14 @@ class PiAgentPlugin(Star):
                 ).as_dict(),
             }
 
-            # Capture the full context only after ``PiTaskService`` has chosen
-            # the final task workspace.  This keeps event-owned media alive
-            # after AstrBot's pipeline disposes its temporary files while
-            # still returning immediately from the model tool call.
-            initial_context = context
-            initial_context_data = initial_context.as_dict()
-            initial_context_data[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
-            inherit_persona = self._config_bool("inherit_persona", True)
-            # Keep test doubles and host integrations that replace the public
-            # context object after plugin construction aligned with capture.
-            self.astrbot_context_adapter.context = self.astrbot_adapter.context
-
-            async def prepare_context(_task_id: str, task_workspace: Path):
-                captured = await self.astrbot_context_adapter.capture(
-                    event,
-                    workspace=task_workspace,
-                    inherit_persona=inherit_persona,
-                )
-                prepared = captured.as_dict()
-                prepared[WORKER_DESCRIPTOR_KEY] = dict(descriptor)
-                return prepared
-
+            # Only the main model's already-refined tool argument is sent to
+            # Pi. The descriptor is durable control metadata and is filtered
+            # from the worker prompt by the underscore-prefixed key.
             result = await service.create_task(
-                owner_key=initial_context.owner_key,
+                owner_key=owner_key,
                 task=prompt,
-                context=initial_context_data,
-                persona=None,
-                media_references=[],
+                context={WORKER_DESCRIPTOR_KEY: dict(descriptor)},
                 workspace=workspace or None,
-                prepare_context=prepare_context,
             )
             return self._bridge_dump(result)
         except Exception as exc:  # noqa: BLE001

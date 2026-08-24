@@ -33,8 +33,7 @@ from .runtime import (
 )
 from .tools import ToolRegistry
 from .wakeup import WakeupAdapter
-from .context import TaskContext, capture_task_context
-from .astrbot_context_adapter import AstrBotContextAdapter, CapturedAstrBotContext
+from .context import build_pi_prompt, event_owner_key
 from .worker import (
     WORKER_DESCRIPTOR_KEY,
     PiWorkerConfig,
@@ -73,10 +72,8 @@ __all__ = [
     "PiRuntimeVersionError",
     "ToolRegistry",
     "WakeupAdapter",
-    "TaskContext",
-    "capture_task_context",
-    "AstrBotContextAdapter",
-    "CapturedAstrBotContext",
+    "build_pi_prompt",
+    "event_owner_key",
     "UnsupportedAstrBotCapability",
     "WakeMainAgent",
     "WORKER_DESCRIPTOR_KEY",
