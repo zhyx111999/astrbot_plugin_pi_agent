@@ -61,57 +61,6 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 
 后台 Pi 使用 `pi_model` 选择的 AstrBot Provider/model 作为模型绑定，但不会自动继承该 Provider 的上下文、推理、输出、模态、采样、成本或兼容字段。Pi 的运行参数全部由以下插件配置项明确控制：`pi_thinking_level`、`pi_context_window`、`pi_max_output_tokens`、`pi_input_modalities`、`pi_temperature`、`pi_top_p`、`pi_top_k`、`pi_min_p` 和 `pi_sampling_params`。填写 0 或留空的数值字段不写入 Pi 配置，由 Pi 使用默认值；Provider 只提供 OpenAI-compatible 连接地址、鉴权和已选模型绑定。
 
-## 部署指南
-
-### 1. 安装 Pi 运行时
-
-先按照 Pi 官方安装方式安装 Node.js `22.19.0` 和 Pi `0.84.2`，然后在 AstrBot 实际运行用户下验证：
-
-```bash
-node --version
-pi --version
-```
-
-如果 AstrBot 通过 systemd 或 WSL 启动，要在同一个服务环境中验证，而不是只在交互式终端验证。
-
-### 2. 安装插件
-
-```bash
-cd /path/to/astrbot/data/plugins
-git clone https://github.com/zhyx111999/astrbot_plugin_pi_agent.git astrbot_plugin_pi_agent
-```
-
-也可以下载 GitHub Release 压缩包，解压到：
-
-```text
-AstrBot/data/plugins/astrbot_plugin_pi_agent
-```
-
-目录必须直接包含 `main.py`、`metadata.yaml` 和 `_conf_schema.json`，不要再套一层同名目录。
-
-### 3. 配置并重启
-
-在 AstrBot WebUI 中重新加载插件，选择可用的 Provider/model，填写 `pi_model`，然后按下方配置指南设置参数。至少需要：
-
-```text
-enable_async_tasks = true
-pi_model = AstrBot 中已配置的 Provider/model
-pi_thinking_level = max
-```
-
-配置完成后重启 AstrBot：
-
-```bash
-systemctl --user restart astrbot.service
-systemctl --user is-active astrbot.service
-```
-
-首次创建异步任务时，插件会在自己的状态目录创建 SQLite WAL registry、task-owned native sessions、workspaces 和 agent 配置目录。建议先用短任务验证 `completed`、`pi_task_poll`、`pi_task_read` 和文件产物读取。
-
-### 4. 升级
-
-升级前不需要删除任务状态目录。替换插件源码并重启 AstrBot 后，未终态任务会从 native session 自动恢复；不要同时启动两个插件副本，也不要手动复制 task-owned session 文件。
-
 ## 配置指南
 
 插件配置由 AstrBot WebUI 根据 `_conf_schema.json` 生成，通常不需要手动编辑 JSON。建议按以下顺序配置：
@@ -250,5 +199,3 @@ ruff check main.py pi_agent_bridge pi_legacy tests
 python -m compileall -q main.py pi_agent_bridge pi_legacy
 git diff --check
 ```
-
-本项目是独立 fork。请不要把改动推送到上游 Pi 或 AstrBot 仓库；发布时推送到个人 `astrbot_plugin_pi_agent` 仓库。
