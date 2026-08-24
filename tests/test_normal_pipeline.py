@@ -13,6 +13,7 @@ import pytest
 
 from pi_agent_bridge.normal_pipeline import (
     NormalPipelineRelayError,
+    enqueue_progress_wakeup,
     enqueue_terminal_wakeup,
 )
 
@@ -75,6 +76,42 @@ async def test_terminal_wakeup_enters_normal_event_queue(monkeypatch):
         "platform": "snowluma",
         "is_wake": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_progress_wakeup_marks_progress_kind(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    class StarTools:
+        @staticmethod
+        async def create_message(**kwargs):
+            calls.append(("message", kwargs))
+            return "synthetic-event"
+
+        @staticmethod
+        async def create_event(event, **kwargs):
+            calls.append(("event", {"event": event, **kwargs}))
+
+    message_components = types.ModuleType("astrbot.api.message_components")
+    message_components.Plain = _Plain
+    platform = types.ModuleType("astrbot.api.platform")
+    platform.MessageMember = _Member
+    star = types.ModuleType("astrbot.api.star")
+    star.StarTools = StarTools
+    for name, module in {
+        "astrbot.api.message_components": message_components,
+        "astrbot.api.platform": platform,
+        "astrbot.api.star": star,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    await enqueue_progress_wakeup(
+        context=object(),
+        session_origin="snowluma:FriendMessage:3268514224",
+        message="intermediate progress",
+    )
+
+    assert calls[0][1]["raw_message"]["kind"] == "progress_wakeup"
 
 
 @pytest.mark.asyncio

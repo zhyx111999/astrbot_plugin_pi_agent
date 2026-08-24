@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import inspect
 import sys
@@ -15,7 +16,10 @@ from pi_agent_bridge import (
     TaskRegistry,
 )
 from pi_agent_bridge.context import event_owner_key
-from pi_agent_bridge.normal_pipeline import enqueue_terminal_wakeup
+from pi_agent_bridge.normal_pipeline import (
+    enqueue_progress_wakeup,
+    enqueue_terminal_wakeup,
+)
 from pi_agent_bridge.provider import (
     PiModelSettings,
     PiProviderError,
@@ -48,6 +52,21 @@ def _terminal_wakeup_note(task_id: str, status: str, reason: str) -> str:
     )
 
 
+def _progress_wakeup_note(task_id: str, tail: str) -> str:
+    """Build an intermediate progress prompt with a bounded native tail."""
+
+    return (
+        "后台 Pi Agent 任务仍在运行，这是一次中间进度更新。"
+        f"任务 ID：{task_id}。\n"
+        "请根据下面最近的 Pi 原生会话尾部，整理一条简短、自然、面向用户的当前进展回复。"
+        "不要直接复制 JSONL、工具调用、命令输出、内部状态、错误堆栈或系统日志。"
+        "不要调用 send_message_to_user 发送普通文本；本次事件的普通文本回复会由正常响应管线发送。"
+        "如果尾部只有重复的内部过程或没有有意义的进展，可以不发送消息。\n"
+        "--- Pi 最近会话尾部开始 ---\n"
+        f"{tail}\n"
+        "--- Pi 最近会话尾部结束 ---"
+    )
+
 
 class PiAgentPlugin(Star):
     """Run isolated Pi Agent tasks from AstrBot's main model."""
@@ -65,6 +84,7 @@ class PiAgentPlugin(Star):
         self._task_registry: TaskRegistry | None = None
         self._task_service_lock = None
         self._pending_terminal_wakeups: set[asyncio.Task[None]] = set()
+        self._progress_digests: dict[str, str] = {}
         logger.info("PiAgent initialized")
 
     async def initialize(self):
@@ -83,6 +103,7 @@ class PiAgentPlugin(Star):
                 return_exceptions=True,
             )
             self._pending_terminal_wakeups.clear()
+        self._progress_digests.clear()
         if self.pi_task_service is not None:
             await self.pi_task_service.shutdown()
             self.pi_task_service = None
@@ -208,6 +229,31 @@ class PiAgentPlugin(Star):
                 thinking_level=settings.thinking_level,
             )
 
+        async def progress_task(task) -> None:
+            """Relay one changed native-session tail as an intermediate update."""
+
+            service = self.pi_task_service
+            if service is None:
+                return
+            try:
+                tail = service.recent_session_tail(task.task_id, max_chars=8_000)
+                if not tail.strip():
+                    return
+                digest = hashlib.sha256(tail.encode("utf-8")).hexdigest()
+                if self._progress_digests.get(task.task_id) == digest:
+                    return
+                self._progress_digests[task.task_id] = digest
+                await enqueue_progress_wakeup(
+                    context=self.astrbot_adapter.context,
+                    session_origin=task.owner_key,
+                    message=_progress_wakeup_note(task.task_id, tail),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to relay Pi intermediate progress for %s",
+                    task.task_id,
+                )
+
         async def retry_terminal_wakeup(task, note: str) -> None:
             """Retry a startup wakeup after AstrBot has loaded its platforms."""
 
@@ -288,7 +334,7 @@ class PiAgentPlugin(Star):
                 agent_root=agent_root,
                 worker_config_factory=worker_config_factory,
                 poll_interval_seconds=int(
-                    self._config_value("poll_interval_seconds", 60)
+                    self._config_value("poll_interval_seconds", 180)
                 ),
                 max_concurrent_tasks=int(
                     self._config_value("max_concurrent_tasks", 4)
@@ -301,6 +347,7 @@ class PiAgentPlugin(Star):
                 ),
                 session_root=state_root / "sessions",
                 terminal_task_callback=wake_terminal_task,
+                observation_task_callback=progress_task,
             )
             await scheduler.start()
         except Exception:

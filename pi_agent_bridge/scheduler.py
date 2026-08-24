@@ -71,7 +71,7 @@ class TaskScheduler:
         provider: str | None = None,
         model: str | None = None,
         environment: dict[str, str] | None = None,
-        poll_interval_seconds: int = 60,
+        poll_interval_seconds: int = 180,
         no_meaningful_event_limit: int = 3,
         max_concurrent_tasks: int = 4,
         command_timeout: float = 10.0,
@@ -81,6 +81,8 @@ class TaskScheduler:
         worker_config_factory: WorkerConfigFactory | None = None,
         process_probe: ProcessProbe = _is_process_alive,
         terminal_task_callback: Callable[[TaskRecord, str], Awaitable[Any] | Any]
+        | None = None,
+        observation_task_callback: Callable[[TaskRecord], Awaitable[Any] | Any]
         | None = None,
     ) -> None:
         if poll_interval_seconds < 1:
@@ -123,6 +125,7 @@ class TaskScheduler:
         self.process_probe = process_probe
         self.worker_config_factory = worker_config_factory
         self.terminal_task_callback = terminal_task_callback
+        self.observation_task_callback = observation_task_callback
         self._terminal_notified: set[tuple[str, str]] = set()
         self._last_observed_at: dict[str, float] = {}
         self._observation_locks: dict[str, asyncio.Lock] = {}
@@ -834,7 +837,14 @@ class TaskScheduler:
 
     async def _poll_safely(self, task_id: str) -> None:
         try:
-            await self.poll_task(task_id)
+            task = await self.poll_task(task_id)
+            if (
+                self.observation_task_callback is not None
+                and task.status in _ACTIVE_STATUSES
+            ):
+                result = self.observation_task_callback(task)
+                if inspect.isawaitable(result):
+                    await result
         except (TaskNotFoundError, InvalidTaskTransition):
             return
         except Exception:  # noqa: BLE001

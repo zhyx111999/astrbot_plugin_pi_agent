@@ -48,13 +48,14 @@ def _group_wake_prefix(context: Any, session_origin: str) -> str:
     return ""
 
 
-async def enqueue_terminal_wakeup(
+async def enqueue_task_wakeup(
     *,
     context: Any,
     session_origin: str,
     message: str,
+    kind: str,
 ) -> None:
-    """Submit a terminal wake message to AstrBot's normal event queue.
+    """Submit a task update to AstrBot's normal event queue.
 
     The relay uses only AstrBot's public StarTools and platform APIs. The
     resulting wake event is processed by the regular preprocess/agent/respond
@@ -104,7 +105,7 @@ async def enqueue_terminal_wakeup(
         message_str=wake_message,
         raw_message={
             "origin": "astrbot_plugin_pi_agent",
-            "kind": "terminal_wakeup",
+            "kind": kind,
         },
         group_id=(
             session.session_id
@@ -119,4 +120,41 @@ async def enqueue_terminal_wakeup(
     )
 
 
-__all__ = ["NormalPipelineRelayError", "enqueue_terminal_wakeup"]
+async def enqueue_terminal_wakeup(
+    *,
+    context: Any,
+    session_origin: str,
+    message: str,
+) -> None:
+    """Submit a terminal task wakeup to AstrBot's normal event queue."""
+
+    await enqueue_task_wakeup(
+        context=context,
+        session_origin=session_origin,
+        message=message,
+        kind="terminal_wakeup",
+    )
+
+
+async def enqueue_progress_wakeup(
+    *,
+    context: Any,
+    session_origin: str,
+    message: str,
+) -> None:
+    """Submit a bounded intermediate task update to AstrBot's normal queue."""
+
+    await enqueue_task_wakeup(
+        context=context,
+        session_origin=session_origin,
+        message=message,
+        kind="progress_wakeup",
+    )
+
+
+__all__ = [
+    "NormalPipelineRelayError",
+    "enqueue_progress_wakeup",
+    "enqueue_task_wakeup",
+    "enqueue_terminal_wakeup",
+]

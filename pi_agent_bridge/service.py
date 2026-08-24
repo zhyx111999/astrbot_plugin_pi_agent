@@ -177,6 +177,20 @@ class PiTaskService:
         except Exception as exc:  # noqa: BLE001
             return self.error("task_poll", safe_error_summary(exc), task_id=task_id)
 
+    def recent_session_tail(
+        self,
+        task_id: str,
+        *,
+        max_chars: int = POLL_SESSION_CHARS,
+    ) -> str:
+        """Read a bounded native-session tail without triggering another poll."""
+
+        if max_chars < 1:
+            raise ValueError("max_chars must be positive")
+        task = self.registry.get_task(task_id)
+        text, _, _ = _read_session_tail(task.session_path, max_chars=max_chars)
+        return text
+
     async def follow_up(self, task_id: str, message: str) -> dict[str, Any]:
         return await self._run_scheduler_operation(
             "task_follow_up", task_id, self.scheduler.follow_up, message

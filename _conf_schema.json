@@ -98,9 +98,9 @@
   },
   "poll_interval_seconds": {
     "type": "int",
-    "description": "后台观察快照的间隔秒数",
-    "hint": "此项只影响后台观察器。即使观察周期较慢或没有输出，也不会停止 Pi 任务。",
-    "default": 60,
+    "description": "后台检活与中间进度更新间隔秒数",
+    "hint": "每次后台检活会读取 Pi 原生会话最近 8,000 个字符，并交给主 Agent 整理成可选的中间进度回复。此项不是任务超时；默认 180 秒。",
+    "default": 180,
     "slider": {
       "min": 1,
       "max": 3600,

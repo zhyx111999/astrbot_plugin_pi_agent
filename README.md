@@ -10,7 +10,7 @@
 - **不占用当前 AstrBot 工具调用**：Pi 的 JSONL stdin/stdout 由后台 worker 处理，不把长任务包在一次 AstrBot 工具调用里。
 - **没有硬超时和空闲超时**：插件不会因为任务运行超过 900 秒、某段时间没有输出，或一次观察调用较慢而杀死 Pi。
 - **AstrBot 主动检查**：Pi worker 的 stdout JSONL 只由插件用于维持 RPC/worker 生命周期；`pi_task_status` 不返回 Pi 内容，`pi_task_poll` 才按 AstrBot 的调用显式请求一次短状态检查。
-- **Pi 完全静默**：Pi 不向任何 AstrBot 会话发送内容；任务进入 completed、failed、cancelled 或 orphaned 后，插件只通过 AstrBot 公开 StarTools 事件入口将终态通知提交回普通事件队列，由主模型自己读取 Pi session 并决定是否回复或发送文件。终态唤醒禁止转发 Pi 原文、JSONL、工具日志和内部状态，只允许发送整理后的用户可见回复。
+- **Pi 进程完全静默**：Pi 不向任何 AstrBot 会话直接发送内容；后台检活默认每 180 秒、按配置可调，插件只读取 Pi 原生会话最近 8,000 个字符并交给主 Agent 整理中间进度。任务进入 completed、failed、cancelled 或 orphaned 后，插件通过 AstrBot 公开 StarTools 事件入口提交终态通知，由主模型自己读取或使用提供的会话内容并决定回复或发送文件。任何中间态和终态都禁止直接转发 Pi 原文、JSONL、工具日志和内部状态。
 - **原生会话直接读取**：`pi_task_read` 默认只读取对应 Pi 原生 session JSONL 最近 50,000 个字符；用户明确要求完整会话时使用 `pi_task_read_full`。插件不构造第二份内容历史，不提炼摘要，不解释错误，AstrBot 自己读取和解析会话。
 - **读写权限分离**：普通用户可以列出、检查、轮询和读取全部登记任务；只有任务 owner 或 AstrBot 管理员可以 follow-up、resume、cancel、delete。管理员始终可以管理全部任务。
 - **任务彼此隔离**：每个任务有独立进程、Pi session、工作区、事件游标和 registry 记录，同一 AstrBot 会话可同时运行多个 Pi 任务。
@@ -42,7 +42,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - `pi_agent_bridge/context.py`：构造仅包含主模型整理后任务请求的 Pi 初始 prompt；不读取 AstrBot 人设、历史、事件或媒体上下文。
 - `pi_agent_bridge/provider.py`：读取 AstrBot 选定 Provider 的连接地址、鉴权和模型绑定；将插件显式配置的 PiModelSettings 写入任务专属 Pi `models.json`。
 - `pi_agent_bridge/artifacts.py`：保留兼容模块；新异步任务不自动扫描或提炼 workspace 内容。
-- `pi_agent_bridge/normal_pipeline.py`：使用 AstrBot 公开 StarTools.create_message/create_event 将 Pi 终态通知提交回普通事件 pipeline；不可用时不直接发送 Pi 内容。
+- `pi_agent_bridge/normal_pipeline.py`：使用 AstrBot 公开 StarTools.create_message/create_event 将 Pi 中间进度和终态通知提交回普通事件 pipeline；群聊使用会话配置的唤醒前缀，不可用时不直接发送 Pi 内容。
 - Pi native session 自动压缩：每个新异步任务都会启用 Pi 官方 `set_auto_compaction`，避免长期上下文无限膨胀。
 - Pi 终态唤醒：任务完成、失败、取消或失联时，插件通过 AstrBot 公开事件入口把终态通知重新提交到原会话普通 pipeline；插件不直接发送 Pi 内容。
 
@@ -91,7 +91,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 | `state_directory` | `~/.pi/astrbot_plugin_pi_agent` | 桥接状态目录，存放任务数据库、会话、Agent 配置、工作区和 artifact 元数据。 |
 | `task_database` | `~/.pi/astrbot_plugin_pi_agent/tasks.db` | SQLite WAL 任务注册表路径。 |
 | `workspace_root` | `~/.pi/astrbot_plugin_pi_agent/workspaces` | 任务工作区根目录，每个任务使用独立子目录。 |
-| `poll_interval_seconds` | `60` | 后台观察周期，不是任务超时。 |
+| `poll_interval_seconds` | `180` | 后台检活和中间进度更新周期，可配置，不是任务超时。每次最多提供 Pi 原生会话最近 8,000 个字符给主 Agent。 |
 | `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和 artifact。活动/暂停/orphaned 任务不被误删。 |
 | `max_concurrent_tasks` | `4` | 同时运行的独立 Pi worker 数量。 |
 | `command_timeout_seconds` | `10` | 仅限制 poll/observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；不是任务硬超时或空闲超时。 |
