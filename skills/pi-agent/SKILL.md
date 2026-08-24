@@ -21,6 +21,8 @@ The prompt must be a complete, self-contained task instruction. Include the targ
 
 At creation time, the new Pi session receives only the main model's complete, already-refined task request plus the selected model binding and explicit Pi runtime settings. AstrBot persona, full system prompts, conversation history, raw events, media context, and viewer context are not injected into the Pi session. Later inspection or management never injects any caller context.
 
+Terminal wakeups use AstrBot's native active-agent event. After reading a terminal Pi session, the awakened main Agent must never forward raw Pi session text, JSONL, tool logs, command output, internal status, or stack traces. If a user-visible reply is needed, send one concise, natural, interpreted reply; send files through `send_message_to_user` with a short explanation. If there is no meaningful user-visible result, do not send a message.
+
 ## AstrBot-Controlled Workflow
 
 1. Call `pi_agent` and record the returned `task_id`.

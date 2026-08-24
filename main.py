@@ -48,6 +48,21 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import PermissionType
 from astrbot.api.star import Context, Star
 
+def _terminal_wakeup_note(task_id: str, status: str, reason: str) -> str:
+    """Build a user-facing reply policy for AstrBot's native wake event."""
+
+    return (
+        "后台 Pi Agent 任务已进入终态。"
+        f"任务 ID：{task_id}；状态：{status}；原因：{reason}。\n"
+        "请先读取该任务的 Pi 原生会话，再根据原用户需求判断是否需要回复。"
+        "不要把 Pi 会话原文、JSONL、工具调用、命令输出、内部状态、错误堆栈或系统日志直接发送给用户。"
+        "不要复制 Pi 的过程性总结，也不要发送以省略号、系统腔或装饰性颜文字结尾的原始文本。"
+        "如确实需要通知用户，只发送一条经过主 Agent 整理的、简洁自然的普通用户回复；"
+        "需要发送文件时使用 send_message_to_user 发送文件，并附带简短说明。"
+        "如果没有有意义的用户可见结果，则不要发送消息。"
+    )
+
+
 USAGE = """Pi Agent 命令帮助
 
 会话管理：
@@ -255,11 +270,7 @@ class PiAgentPlugin(Star):
                 logger.warning("AstrBot active-agent scheduler unavailable for Pi task %s", task.task_id)
                 return
             status = task.status.value
-            note = (
-                f"后台 Pi Agent 任务已进入终态：{status}。"
-                f"任务 ID：{task.task_id}。"
-                "请读取该任务的 Pi 原生会话并根据用户需求决定是否回复或继续管理。"
-            )
+            note = _terminal_wakeup_note(task.task_id, status, reason)
             try:
                 await cron_manager.add_active_job(
                     name=f"Pi Agent terminal {task.task_id}",
@@ -270,6 +281,8 @@ class PiAgentPlugin(Star):
                         "pi_task_id": task.task_id,
                         "pi_status": status,
                         "pi_reason": reason,
+                        "note": note,
+                        "pi_reply_policy": "interpreted_user_reply_only",
                     },
                     description=note,
                     enabled=True,

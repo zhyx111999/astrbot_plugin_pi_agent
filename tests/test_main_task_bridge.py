@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import main
 from pi_agent_bridge.models import TaskStatus
 from pi_agent_bridge.registry import TaskRegistry
 from pi_agent_bridge.worker import WORKER_DESCRIPTOR_KEY
@@ -21,6 +22,15 @@ def _event(origin: str, *, admin: bool = False):
         message_str="",
         is_admin=lambda: admin,
     )
+
+
+def test_terminal_wakeup_requires_interpreted_user_reply():
+    note = main._terminal_wakeup_note("task-1", "completed", "worker_finished")
+
+    assert "Pi 会话原文" in note
+    assert "JSONL" in note
+    assert "send_message_to_user" in note
+    assert "interpreted_user_reply_only" not in note
 
 
 def test_task_permission_default_matches_schema(plugin, non_admin_event):
