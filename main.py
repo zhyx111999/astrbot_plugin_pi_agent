@@ -1,3 +1,4 @@
+import asyncio
 import json
 import inspect
 import sys
@@ -63,6 +64,7 @@ class PiAgentPlugin(Star):
         self.pi_task_scheduler: TaskScheduler | None = None
         self._task_registry: TaskRegistry | None = None
         self._task_service_lock = None
+        self._pending_terminal_wakeups: set[asyncio.Task[None]] = set()
         logger.info("PiAgent initialized")
 
     async def initialize(self):
@@ -73,6 +75,14 @@ class PiAgentPlugin(Star):
 
     async def terminate(self):
         """Terminate all managed pi connections when the plugin is unloaded."""
+        for pending in tuple(self._pending_terminal_wakeups):
+            pending.cancel()
+        if self._pending_terminal_wakeups:
+            await asyncio.gather(
+                *self._pending_terminal_wakeups,
+                return_exceptions=True,
+            )
+            self._pending_terminal_wakeups.clear()
         if self.pi_task_service is not None:
             await self.pi_task_service.shutdown()
             self.pi_task_service = None
@@ -198,6 +208,41 @@ class PiAgentPlugin(Star):
                 thinking_level=settings.thinking_level,
             )
 
+        async def retry_terminal_wakeup(task, note: str) -> None:
+            """Retry a startup wakeup after AstrBot has loaded its platforms."""
+
+            for delay in (2.0, 4.0, 8.0, 16.0, 30.0):
+                await asyncio.sleep(delay)
+                try:
+                    await enqueue_terminal_wakeup(
+                        context=self.astrbot_adapter.context,
+                        session_origin=task.owner_key,
+                        message=note,
+                    )
+                    logger.info(
+                        "Relayed deferred Pi terminal wakeup for %s",
+                        task.task_id,
+                    )
+                    return
+                except ValueError as exc:
+                    if not str(exc).startswith("Platform not found:"):
+                        logger.exception(
+                            "Failed to relay deferred Pi terminal wakeup for %s",
+                            task.task_id,
+                        )
+                        return
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to relay deferred Pi terminal wakeup for %s",
+                        task.task_id,
+                    )
+                    return
+
+            logger.error(
+                "Giving up deferred Pi terminal wakeup for %s after platform retries",
+                task.task_id,
+            )
+
         async def wake_terminal_task(task, reason: str) -> None:
             """Relay a Pi terminal wakeup into AstrBot's normal event pipeline."""
 
@@ -208,6 +253,23 @@ class PiAgentPlugin(Star):
                     context=self.astrbot_adapter.context,
                     session_origin=task.owner_key,
                     message=note,
+                )
+            except ValueError as exc:
+                if not str(exc).startswith("Platform not found:"):
+                    logger.exception(
+                        "Failed to relay Pi terminal wakeup into normal pipeline for %s",
+                        task.task_id,
+                    )
+                    return
+                retry = asyncio.create_task(
+                    retry_terminal_wakeup(task, note),
+                    name=f"pi-terminal-wakeup-{task.task_id}",
+                )
+                self._pending_terminal_wakeups.add(retry)
+                retry.add_done_callback(self._pending_terminal_wakeups.discard)
+                logger.warning(
+                    "Pi platform is not loaded yet; deferred terminal wakeup for %s",
+                    task.task_id,
                 )
             except Exception:  # noqa: BLE001
                 # Never fall back to direct Pi-content delivery. A host without
