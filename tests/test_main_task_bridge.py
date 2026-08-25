@@ -24,6 +24,22 @@ def _event(origin: str, *, admin: bool = False):
     )
 
 
+def test_task_wake_filter_matches_only_plugin_events():
+    wake_filter = main._PiTaskWakeFilter()
+    event = SimpleNamespace(
+        message_obj=SimpleNamespace(
+            raw_message={
+                "origin": "astrbot_plugin_pi_agent",
+                "kind": "terminal_wakeup",
+            }
+        )
+    )
+    assert wake_filter.filter(event, {})
+
+    event.message_obj.raw_message = {"origin": "other", "kind": "terminal_wakeup"}
+    assert not wake_filter.filter(event, {})
+
+
 def test_terminal_wakeup_requires_interpreted_user_reply():
     note = main._terminal_wakeup_note(
         "task-1",

@@ -36,6 +36,22 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
+
+class _PiTaskWakeFilter:
+    """Activate only plugin-generated task update events."""
+
+    def __init__(self, _raise_error: bool = True) -> None:
+        pass
+
+    def filter(self, event: AstrMessageEvent, _config: Any) -> bool:
+        raw_message = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        return (
+            isinstance(raw_message, dict)
+            and raw_message.get("origin") == "astrbot_plugin_pi_agent"
+            and raw_message.get("kind") in {"progress_wakeup", "terminal_wakeup"}
+        )
+
+
 def _terminal_wakeup_note(
     task_id: str,
     status: str,
@@ -475,6 +491,17 @@ class PiAgentPlugin(Star):
             action = "manage" if write else "read"
             raise PermissionError(f"You do not have permission to {action} this Pi task")
         return service
+
+    # ------------------------------------------------------------------
+    # Synthetic task-event activation
+    # ------------------------------------------------------------------
+
+    @filter.custom_filter(_PiTaskWakeFilter, priority=100_000)
+    async def activate_task_wakeup(self, event: AstrMessageEvent) -> None:
+        """Let task wakeups reach the main Agent without using chat prefixes."""
+
+        event.is_wake = True
+        event.is_at_or_wake_command = True
 
     # ------------------------------------------------------------------
     # LLM tools

@@ -67,9 +67,21 @@ def _fake_llm_tool(name: str | None = None, **kwargs):
     return decorator
 
 
+def _fake_custom_filter(filter_type, **kwargs):
+    """Decorator that records custom event-filter metadata."""
+
+    def decorator(func):
+        func.__custom_filter__ = filter_type
+        func.__priority__ = kwargs.get("priority", 0)
+        return func
+
+    return decorator
+
+
 fake_filter = types.ModuleType("filter")
 fake_filter.command = _fake_command
 fake_filter.llm_tool = _fake_llm_tool
+fake_filter.custom_filter = _fake_custom_filter
 fake_event = types.ModuleType("astrbot.api.event")
 fake_event.AstrMessageEvent = FakeAstrMessageEvent
 fake_event.filter = fake_filter

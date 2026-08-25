@@ -115,13 +115,8 @@ async def test_progress_wakeup_marks_progress_kind(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_group_terminal_wakeup_uses_configured_wake_prefix(monkeypatch):
+async def test_group_terminal_wakeup_keeps_message_prefix_free(monkeypatch):
     calls: list[tuple[str, dict]] = []
-
-    class Context:
-        def get_config(self, session_origin):
-            assert session_origin == "snowluma:GroupMessage:group-123"
-            return {"wake_prefix": ["+"]}
 
     class StarTools:
         @staticmethod
@@ -147,13 +142,13 @@ async def test_group_terminal_wakeup_uses_configured_wake_prefix(monkeypatch):
         monkeypatch.setitem(sys.modules, name, module)
 
     await enqueue_terminal_wakeup(
-        context=Context(),
+        context=object(),
         session_origin="snowluma:GroupMessage:group-123",
         message="terminal wake metadata",
     )
 
-    assert calls[0][1]["message_str"] == "+ terminal wake metadata"
-    assert calls[0][1]["message"][0].text == "+ terminal wake metadata"
+    assert calls[0][1]["message_str"] == "terminal wake metadata"
+    assert calls[0][1]["message"][0].text == "terminal wake metadata"
 
 
 @pytest.mark.asyncio
