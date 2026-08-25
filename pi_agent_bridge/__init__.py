@@ -24,7 +24,7 @@ from .runtime import (
     PiRuntimeUnavailable,
     PiRuntimeVersionError,
 )
-from .context import build_pi_prompt, event_owner_key
+from .context import build_pi_prompt, event_owner_key, event_session_origin
 from .worker import (
     WORKER_DESCRIPTOR_KEY,
     PiWorkerConfig,
@@ -61,6 +61,7 @@ __all__ = [
     "PiRuntimeVersionError",
     "build_pi_prompt",
     "event_owner_key",
+    "event_session_origin",
     "WORKER_DESCRIPTOR_KEY",
     "PiWorkerConfig",
     "WorkerConfigFactory",

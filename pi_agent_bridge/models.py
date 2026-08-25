@@ -23,6 +23,7 @@ class TaskStatus(str, Enum):
 class TaskRecord:
     task_id: str
     owner_key: str
+    session_origin: str
     status: TaskStatus
     prompt: str
     context: dict[str, Any]

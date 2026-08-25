@@ -43,6 +43,7 @@ class PiTaskService:
         self,
         *,
         owner_key: str,
+        session_origin: str | None = None,
         task: str,
         context: Mapping[str, Any] | None = None,
         workspace: str | None = None,
@@ -55,6 +56,10 @@ class PiTaskService:
             return self.error("task_create", "owner_key cannot be empty")
         if not isinstance(task, str) or not task.strip():
             return self.error("task_create", "Task text cannot be empty")
+        if session_origin is not None and (
+            not isinstance(session_origin, str) or not session_origin.strip()
+        ):
+            return self.error("task_create", "session_origin cannot be empty")
 
         task_id: str | None = None
         try:
@@ -64,6 +69,7 @@ class PiTaskService:
             prepared_context = dict(context or {})
             self.registry.create_task(
                 owner_key=owner_key.strip(),
+                session_origin=(session_origin or owner_key).strip(),
                 prompt=task.strip(),
                 context=prepared_context,
                 workspace=str(normalized_workspace),
@@ -388,6 +394,7 @@ class PiTaskService:
             "resource_type": "async_task",
             "task_id": task.task_id,
             "owner_key": task.owner_key,
+            "session_origin": task.session_origin,
             "status": task.status.value,
             "session_id": task.session_id,
             "session_path": task.session_path,

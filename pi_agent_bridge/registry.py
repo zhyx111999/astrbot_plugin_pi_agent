@@ -125,6 +125,7 @@ class TaskRegistry:
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY,
                 owner_key TEXT NOT NULL,
+                session_origin TEXT,
                 status TEXT NOT NULL,
                 prompt TEXT NOT NULL,
                 context_json TEXT NOT NULL,
@@ -174,8 +175,9 @@ class TaskRegistry:
             row["name"]
             for row in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
         }
-        if "session_path" not in columns:
-            self._connection.execute("ALTER TABLE tasks ADD COLUMN session_path TEXT")
+        if "session_origin" not in columns:
+            self._connection.execute("ALTER TABLE tasks ADD COLUMN session_origin TEXT")
+        self._migrate_task_identities()
         # Existing databases may have been compacted by earlier bridge versions.
         # New observations are retained until task retention removes the task so
         # AstrBot can read a Pi session by event cursor without reconstruction.
@@ -189,6 +191,32 @@ class TaskRegistry:
             "(SELECT fingerprint FROM snapshots WHERE snapshots.snapshot_id = tasks.latest_snapshot_id) "
             "WHERE latest_snapshot_id IS NOT NULL"
         )
+
+    def _migrate_task_identities(self) -> None:
+        """Separate legacy session origins from stable task-owner identities."""
+
+        rows = self._connection.execute(
+            "SELECT task_id, owner_key, session_origin FROM tasks"
+        ).fetchall()
+        for row in rows:
+            origin = row["session_origin"] or row["owner_key"]
+            owner = row["owner_key"]
+            if row["session_origin"] is None:
+                self._connection.execute(
+                    "UPDATE tasks SET session_origin=? WHERE task_id=?",
+                    (origin, row["task_id"]),
+                )
+            if owner.count(":") == 2:
+                platform, message_type, sender = owner.split(":", 2)
+                if message_type == "FriendMessage" and sender:
+                    owner = f"{platform}:{sender}"
+                elif message_type == "GroupMessage":
+                    owner = f"legacy:{row['task_id']}"
+                self._connection.execute(
+                    "UPDATE tasks SET owner_key=? WHERE task_id=?",
+                    (owner, row["task_id"]),
+                )
+
 
     @contextmanager
     def _write_transaction(self):
@@ -206,7 +234,9 @@ class TaskRegistry:
         if row is None:
             raise TaskNotFoundError("task not found")
         return TaskRecord(
-            task_id=row["task_id"], owner_key=row["owner_key"], status=TaskStatus(row["status"]),
+            task_id=row["task_id"], owner_key=row["owner_key"],
+            session_origin=row["session_origin"] or row["owner_key"],
+            status=TaskStatus(row["status"]),
             prompt=row["prompt"], context=_decode(row["context_json"]), session_id=row["session_id"],
             session_path=row["session_path"],
             process_id=row["process_id"], workspace=row["workspace"], event_cursor=row["event_cursor"],
@@ -216,7 +246,7 @@ class TaskRegistry:
         )
 
     def create_task(
-        self, *, owner_key: str, prompt: str, context: Mapping[str, Any] | None = None,
+        self, *, owner_key: str, session_origin: str | None = None, prompt: str, context: Mapping[str, Any] | None = None,
         session_id: str | None = None, session_path: str | None = None,
         process_id: int | None = None, workspace: str | None = None,
         task_id: str | None = None, status: TaskStatus = TaskStatus.QUEUED,
@@ -227,8 +257,8 @@ class TaskRegistry:
         finished_at = now if normalized_status in _TERMINAL else None
         with self._lock, self._write_transaction():
             self._connection.execute(
-                "INSERT INTO tasks(task_id,owner_key,status,prompt,context_json,session_id,session_path,process_id,workspace,created_at,updated_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (task_id, owner_key, normalized_status.value, prompt, _json(context), session_id, session_path, process_id, workspace, now, now, finished_at),
+                "INSERT INTO tasks(task_id,owner_key,session_origin,status,prompt,context_json,session_id,session_path,process_id,workspace,created_at,updated_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (task_id, owner_key, session_origin or owner_key, normalized_status.value, prompt, _json(context), session_id, session_path, process_id, workspace, now, now, finished_at),
             )
             return self.get_task(task_id)
 

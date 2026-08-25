@@ -55,6 +55,53 @@ def test_terminal_wakeup_requires_interpreted_user_reply():
     assert "interpreted_user_reply_only" not in note
 
 
+def _identity_event(
+    *,
+    origin: str,
+    platform: str = "snowluma",
+    sender: str = "3268514224",
+    group: str = "",
+):
+    return SimpleNamespace(
+        unified_msg_origin=origin,
+        get_platform_id=lambda: platform,
+        get_platform_name=lambda: platform,
+        get_sender_id=lambda: sender,
+        get_group_id=lambda: group,
+        is_admin=lambda: False,
+    )
+
+
+def test_group_tasks_are_owner_scoped_by_sender():
+    plugin = main.PiAgentPlugin(context=SimpleNamespace())
+    task = SimpleNamespace(owner_key="snowluma:111", session_origin="snowluma:GroupMessage:748")
+    owner = _identity_event(
+        origin="snowluma:GroupMessage:748",
+        sender="111",
+        group="748",
+    )
+    other = _identity_event(
+        origin="snowluma:GroupMessage:748",
+        sender="222",
+        group="748",
+    )
+
+    assert plugin._task_is_manageable(owner, task)
+    assert not plugin._task_is_manageable(other, task)
+
+
+def test_same_user_can_manage_task_from_another_session():
+    plugin = main.PiAgentPlugin(context=SimpleNamespace())
+    task = SimpleNamespace(owner_key="snowluma:3268514224", session_origin="snowluma:FriendMessage:3268514224")
+    group_event = _identity_event(
+        origin="snowluma:GroupMessage:748",
+        sender="3268514224",
+        group="748",
+    )
+
+    assert plugin._task_is_manageable(group_event, task)
+
+
 def test_task_permission_default_matches_schema(plugin, non_admin_event):
     """Background tasks default to owner-scoped access, not admin-only."""
     assert plugin._require_task_permission(non_admin_event) is None
@@ -150,7 +197,25 @@ async def test_pi_agent_sends_only_refined_request_and_descriptor(plugin):
 
 
 @pytest.mark.asyncio
-async def test_pi_agent_uses_only_fixed_provider_and_model_descriptor(plugin):
+async def test_pi_agent_separates_owner_identity_from_callback_session(plugin):
+    plugin.plugin_config = {"pi_model": "fixed-provider/fixed-model"}
+    service = MagicMock()
+    service.create_task = AsyncMock(return_value={"ok": True, "status": "queued"})
+    plugin.pi_task_service = service
+
+    await plugin.pi_agent(
+        _identity_event(
+            origin="snowluma:GroupMessage:748",
+            sender="111",
+            group="748",
+        ),
+        "research",
+    )
+
+    kwargs = service.create_task.await_args.kwargs
+    assert kwargs["owner_key"] == "snowluma:111"
+    assert kwargs["session_origin"] == "snowluma:GroupMessage:748"
+
     class Context:
         async def get_current_chat_provider_id(self, _umo):
             raise AssertionError("pi_agent must not inherit the current chat provider")

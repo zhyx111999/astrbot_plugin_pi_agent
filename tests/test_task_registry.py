@@ -2,12 +2,42 @@
 
 # isort: off
 import _helpers  # noqa: F401
+import sqlite3
+
 from pi_agent_bridge import TaskRegistry, TaskStatus  # noqa: E402
 from pi_agent_bridge.registry import InvalidTaskTransition, TaskNotFoundError  # noqa: E402
 # isort: on
 
 
-def test_task_lifecycle_and_resume(tmp_path):
+def test_task_owner_and_session_origin_are_stored_separately(tmp_path):
+    with TaskRegistry(tmp_path / "tasks.db") as registry:
+        task = registry.create_task(
+            owner_key="snowluma:3268514224",
+            session_origin="snowluma:GroupMessage:748796098",
+            prompt="research",
+        )
+        assert task.owner_key == "snowluma:3268514224"
+        assert task.session_origin == "snowluma:GroupMessage:748796098"
+
+
+def test_legacy_group_owner_is_not_granted_group_wide_management(tmp_path):
+    database = tmp_path / "legacy.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, owner_key TEXT NOT NULL, status TEXT NOT NULL, prompt TEXT NOT NULL, context_json TEXT NOT NULL, session_id TEXT, session_path TEXT, process_id INTEGER, workspace TEXT, event_cursor TEXT, no_meaningful_event_count INTEGER NOT NULL DEFAULT 0, latest_snapshot_id INTEGER, latest_snapshot_fingerprint TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)"
+        )
+        now = "2026-01-01T00:00:00+00:00"
+        connection.execute(
+            "INSERT INTO tasks(task_id,owner_key,status,prompt,context_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            ("legacy-task", "snowluma:GroupMessage:748", "completed", "x", "{}", now, now),
+        )
+    with TaskRegistry(database) as registry:
+        task = registry.get_task("legacy-task")
+        assert task.session_origin == "snowluma:GroupMessage:748"
+        assert task.owner_key == "legacy:legacy-task"
+
+
+
     with TaskRegistry(tmp_path / "tasks.db") as registry:
         task = registry.create_task(owner_key="qq:1", prompt="research", context={"role": "system"})
         assert task.status is TaskStatus.QUEUED

@@ -14,7 +14,7 @@ from pi_agent_bridge import (
     TaskScheduler,
     TaskRegistry,
 )
-from pi_agent_bridge.context import event_owner_key
+from pi_agent_bridge.context import event_owner_key, event_session_origin
 from pi_agent_bridge.normal_pipeline import (
     enqueue_progress_wakeup,
     enqueue_terminal_wakeup,
@@ -264,7 +264,7 @@ class PiAgentPlugin(Star):
                 self._progress_digests[task.task_id] = digest
                 await enqueue_progress_wakeup(
                     context=self.context,
-                    session_origin=task.owner_key,
+                    session_origin=task.session_origin,
                     message=_progress_wakeup_note(task.task_id, tail),
                 )
             except Exception:  # noqa: BLE001
@@ -299,7 +299,7 @@ class PiAgentPlugin(Star):
                 try:
                     await enqueue_terminal_wakeup(
                         context=self.context,
-                        session_origin=task.owner_key,
+                        session_origin=task.session_origin,
                         message=terminal_note(task, reason),
                     )
                     logger.info(
@@ -332,7 +332,7 @@ class PiAgentPlugin(Star):
             try:
                 await enqueue_terminal_wakeup(
                     context=self.context,
-                    session_origin=task.owner_key,
+                    session_origin=task.session_origin,
                     message=terminal_note(task, reason),
                 )
             except ValueError as exc:
@@ -548,6 +548,7 @@ class PiAgentPlugin(Star):
                 )
             service = await self._task_service_or_error()
             owner_key = event_owner_key(event)
+            session_origin = event_session_origin(event)
             mcp_paths = self._config_value("pi_mcp_config_paths", [])
             if mcp_paths:
                 return self._bridge_error(
@@ -567,6 +568,7 @@ class PiAgentPlugin(Star):
             # from the worker prompt by the underscore-prefixed key.
             result = await service.create_task(
                 owner_key=owner_key,
+                session_origin=session_origin,
                 task=prompt,
                 context={WORKER_DESCRIPTOR_KEY: dict(descriptor)},
                 workspace=workspace or None,

@@ -12,7 +12,7 @@
 - **AstrBot 主动检查**：Pi worker 的 stdout JSONL 只由插件用于维持 RPC/worker 生命周期；`pi_task_status` 不返回 Pi 内容，`pi_task_poll` 才按 AstrBot 的调用显式请求一次短状态检查。
 - **Pi 进程完全静默**：Pi 不向任何 AstrBot 会话直接发送内容；后台检活默认每 180 秒、按配置可调，插件只读取 Pi 原生会话最近 8,000 个字符并交给主 Agent 整理中间进度。任务进入 completed、failed、cancelled 或 orphaned 后，插件通过 AstrBot 公开 StarTools 事件入口提交终态通知，由主模型自己读取或使用提供的会话内容并决定回复或发送文件。任何中间态和终态都禁止直接转发 Pi 原文、JSONL、工具日志和内部状态。
 - **原生会话有界读取**：任务检活、中间态和终态都只使用对应 Pi 原生 session JSONL 最近 8,000 个字符。`pi_session_search` 可以按关键词返回匹配点上下文，总长度最多 8,000 个字符。插件不构造第二份内容历史，不提炼摘要，不解释错误，AstrBot 自己加工会话内容。
-- **读写权限分离**：普通用户可以列出、检查、轮询和读取全部登记任务；只有任务 owner 或 AstrBot 管理员可以 follow-up、resume、cancel、delete。管理员始终可以管理全部任务。
+- **权限边界分离**：任务所有者按 `平台 + 发送者 ID` 记录，群聊成员不再共享所有权；任务中间态和终态按独立保存的创建会话回传。同一用户可以跨私聊和群聊管理自己的任务，其他用户只能读取，管理员可以管理全部任务。
 - **任务彼此隔离**：每个任务有独立进程、Pi session、工作区、事件游标和 registry 记录，同一 AstrBot 会话可同时运行多个 Pi 任务。
 
 Pi 官方 CLI、RPC JSONL 协议和 AstrBot 官方代码均保持原样。本仓库只维护独立适配器和任务桥接层。
@@ -36,10 +36,10 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 
 - `pi_agent_bridge/runtime.py`：固定选择插件内置 Node `22.19.0` / Pi `0.84.2` runtime，不向用户暴露可执行文件路径覆盖配置。
 - `pi_agent_bridge/rpc.py`：公开 Pi RPC 的 JSONL 读写、事件游标、steer、cancel、resume。
-- `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、session 路径、进程信息、生命周期和 retention。
+- `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、session 路径、进程信息、任务所有者身份、原始回传会话、生命周期和 retention。
 - `pi_agent_bridge/scheduler.py`：并发限制、后台观察、worker 生命周期和重启接管。
 - `pi_agent_bridge/service.py`：给 AstrBot 工具使用的任务控制、8,000 字符 recent-tail 读取和关键词上下文检索 facade。
-- `pi_agent_bridge/context.py`：构造仅包含主模型整理后任务请求的 Pi 初始 prompt；不读取 AstrBot 人设、历史、事件或媒体上下文。
+- `pi_agent_bridge/context.py`：构造仅包含主模型整理后任务请求的 Pi 初始 prompt，并分别生成稳定的发送者身份和原始会话来源。
 - `pi_agent_bridge/provider.py`：读取 AstrBot 选定 Provider 的连接地址、鉴权和模型绑定；将插件显式配置的 PiModelSettings 写入任务专属 Pi `models.json`。
 - 当前版本不自动扫描或提炼 workspace 内容；任务产物只保留明确登记的元数据。
 - `pi_agent_bridge/normal_pipeline.py`：使用 AstrBot 公开 StarTools.create_message/create_event 将 Pi 中间进度和终态通知提交回普通事件 pipeline。插件为自身合成事件注册专用唤醒过滤器，避免群聊前缀被其他唤醒插件当作普通命令拦截；不可用时不直接发送 Pi 内容。
