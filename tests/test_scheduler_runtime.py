@@ -65,7 +65,7 @@ class FakeWorker:
 async def test_runtime_resolution_is_lazy_and_passed_as_argv(tmp_path: Path):
     FakeWorker.created.clear()
     runtime = FakeRuntime()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -78,7 +78,11 @@ async def test_runtime_resolution_is_lazy_and_passed_as_argv(tmp_path: Path):
     await scheduler.start()
     assert runtime.calls == 0
 
-    task = registry.create_task(owner_key="owner", prompt="long task")
+    task = registry.create_task(
+        owner_key="owner",
+        session_origin="snowluma:FriendMessage:owner",
+        prompt="long task",
+    )
     await scheduler.submit(task, prompt="long task")
 
     assert runtime.calls == 1

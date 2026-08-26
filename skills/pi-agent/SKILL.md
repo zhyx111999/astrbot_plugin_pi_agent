@@ -47,17 +47,12 @@ The plugin does not create semantic progress summaries or automatically pause a 
 - `pi_task_resume(task_id: string)`: Resume an existing task/session without rebuilding its original context.
 - `pi_task_cancel(task_id: string)`: Cancel a task while retaining its durable history.
 - `pi_task_delete(task_id: string)`: Delete a task and its managed resources.
-- `pi_session_list()`: List all registered async Pi sessions.
-- `pi_session_inspect(session_id: string)`: Read-only inspection of an async task session.
-- `pi_session_resume(task_id: string)`: Resume an async task session without rebuilding its context.
-- `pi_session_delete(session_id: string)`: Delete an async task session.
-- `pi_artifact_inspect(task_id: string)`: Read artifact metadata produced by a task.
 
 ## Permissions
 
 Read and write permissions are separate:
 
-- Any ordinary user may list, inspect, poll, search, and inspect artifacts for registered tasks, including tasks owned by other users.
+- Any ordinary user may list, inspect, poll, and search registered tasks, including tasks owned by other users.
 - Only the task owner or an AstrBot administrator may send follow-ups, resume, cancel, delete, or otherwise change a task.
 - AstrBot administrators may manage every registered task regardless of owner.
 - Reading another user's task never changes that task and never injects the reader's context into its Pi session.

@@ -41,7 +41,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 - `pi_agent_bridge/service.py`：给 AstrBot 工具使用的任务控制、8,000 字符 recent-tail 读取和关键词上下文检索 facade。
 - `pi_agent_bridge/context.py`：构造仅包含主模型整理后任务请求的 Pi 初始 prompt，并分别生成稳定的发送者身份和原始会话来源。
 - `pi_agent_bridge/provider.py`：读取 AstrBot 选定 Provider 的连接地址、鉴权和模型绑定；将插件显式配置的 PiModelSettings 写入任务专属 Pi `models.json`。
-- 当前版本不自动扫描或提炼 workspace 内容；任务产物只保留明确登记的元数据。
+- 当前版本不自动扫描或提炼 workspace 内容；任务文件由 Pi 和用户自行管理。
 - `pi_agent_bridge/normal_pipeline.py`：使用 AstrBot 公开 StarTools.create_message/create_event 将 Pi 中间进度和终态通知提交回普通事件 pipeline。插件为自身合成事件注册专用唤醒过滤器，避免群聊前缀被其他唤醒插件当作普通命令拦截；不可用时不直接发送 Pi 内容。
 - Pi native session 自动压缩：每个新异步任务都会启用 Pi 官方 `set_auto_compaction`，避免长期上下文无限膨胀。
 - Pi 终态唤醒：任务完成、失败、取消或失联时，插件通过 AstrBot 公开事件入口把终态通知重新提交到原会话普通 pipeline；插件不直接发送 Pi 内容。
@@ -88,20 +88,20 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 | `pi_top_k` | `0` | Pi top-k；0 表示不写入。 |
 | `pi_min_p` | `0.0` | Pi min-p；0 表示不写入。 |
 | `pi_sampling_params` | `{}` | 额外写入 Pi `samplingParams` 的 JSON 参数。 |
-| `state_directory` | `~/.pi/astrbot_plugin_pi_agent` | 桥接状态目录，存放任务数据库、会话、Agent 配置、工作区和 artifact 元数据。 |
-| `task_database` | `~/.pi/astrbot_plugin_pi_agent/tasks.db` | SQLite WAL 任务注册表路径。 |
+| `state_directory` | `~/.pi/astrbot_plugin_pi_agent` | 桥接状态目录，存放任务数据库、会话、Agent 配置和工作区。 |
+| `task_database` | `~/.pi/astrbot_plugin_pi_agent/tasks_v4.db` | 当前版本专用 SQLite 任务注册表路径。数据库必须由当前版本新建，旧版 tasks.db 不兼容。 |
 | `workspace_root` | `~/.pi/astrbot_plugin_pi_agent/workspaces` | 任务工作区根目录，每个任务使用独立子目录。 |
 | `poll_interval_seconds` | `180` | 后台检活和中间进度更新周期，可配置，不是任务超时。每次最多提供 Pi 原生会话最近 8,000 个字符给主 Agent。 |
-| `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和 artifact。活动/暂停/orphaned 任务不被误删。 |
+| `session_retention_hours` | `24` | 只清理已完成、失败、取消任务的元数据和任务资源。活动/暂停/orphaned 任务不被误删。 |
 | `max_concurrent_tasks` | `4` | 同时运行的独立 Pi worker 数量。 |
 | `command_timeout_seconds` | `10` | 仅限制 poll/observer 的 `get_state` 和 steer/cancel/resume 等短 RPC 确认；不是任务硬超时或空闲超时。 |
 | `pi_skill_paths` | `[]` | 追加的 Pi Skill 目录；每个路径单独一项，填写包含 `SKILL.md` 的目录绝对路径。 |
 | `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
 | `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |
 
-异步任务的 worker 生命周期错误会使任务转为 `failed`；AstrBot 或插件重载后，未终态任务会从 native session 自动重启并继续，不再因为旧 stdio worker 消失而直接变成 orphaned；只有旧 worker 仍存活但标准 stdin/stdout RPC 无法安全接管时才保留 `orphaned`，避免重复写入同一 session。Provider 具体错误仍保留在 Pi 原生 session 中，由 AstrBot 通过中间态、终态尾部或 `pi_session_search` 自己读取和判断。
+异步任务的 worker 生命周期错误会使任务转为 `failed`；AstrBot 或插件重启时，worker 已退出会从 native session 启动新 worker 并继续执行；worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，此时使用 `pi_task_resume` 显式恢复。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
 
-`pi_task_status` 只返回 AstrBot 任务和 native session 元数据，不返回会话内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限 worker 状态检查，并返回最近 8,000 个字符的 native session raw tail，不做摘要、改写、分类、错误提炼或结果判断。`pi_session_search(session_id, keyword)` 可以按关键词检索对应原生会话，并返回匹配位置上下各一段、总长不超过 8,000 个字符的原始上下文。插件不再提供 50,000 字符或完整 JSONL 会话读取工具。
+`pi_task_status` 只返回 AstrBot 任务和 native session 元数据，不返回会话内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限 worker 状态检查，并返回最近 8,000 个字符的 native session raw tail；`pi_session_search(session_id, keyword)` 按关键词返回匹配位置上下文，总长不超过 8,000 个字符。两者都不做摘要、改写、分类、错误提炼或结果判断。
 
 Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 
@@ -124,13 +124,8 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 | `pi_task_resume(task_id)` | owner 或管理员恢复可恢复任务。 |
 | `pi_task_cancel(task_id)` | owner 或管理员取消 worker，但保留任务历史。 |
 | `pi_task_delete(task_id)` | owner 或管理员取消并删除任务元数据及任务资源。 |
-| `pi_session_list()` | 列出全部登记的异步 Pi session。 |
-| `pi_session_inspect(session_id)` | 检查 `pi_agent` 返回的 task ID 对应的 session。 |
-| `pi_session_resume(task_id)` | 恢复任务关联的 session。仅接受 `pi_agent` task ID。 |
-| `pi_session_delete(session_id)` | 删除 task-owned session。 |
-| `pi_artifact_inspect(task_id)` | 兼容读取旧任务 artifact 元数据；新任务不自动扫描或登记 workspace 内容。 |
-
-所有异步控制工具都返回 JSON envelope。`status` 只返回控制元数据；`poll` 和 `session_search` 只返回最多 8,000 个字符的 native session 原始内容。成功和失败都交给主模型二次加工：
+| `pi_session_search(session_id, keyword)` | 按关键词检索对应 Pi 原生 session，返回匹配位置上下文，总长度最多 8,000 个字符。 |
+| `pi_task_poll(task_id)` | 由 AstrBot 主动请求一次短 Pi 状态检查，并返回最近 8,000 字符的 native session raw tail；不做解释。 |
 
 ```json
 {
@@ -162,7 +157,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 
 ## 恢复、保留和删除
 
-AstrBot 或插件重启时会恢复未终态任务：旧 worker 已退出时，插件从 native session 启动新 worker 并继续执行；旧 worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，避免重复启动第二个写入进程，此时使用 `pi_task_resume` 或 `pi_session_resume` 显式恢复。删除操作会取消任务、删除 registry 元数据，并按任务资源策略清理受插件管理的 native session、工作区和 agent 配置目录。插件不需要为新任务清理复制的事件 snapshot 或自动登记的 artifact。
+AstrBot 或插件重启时会恢复未终态任务：worker 已退出时，插件从 native session 启动新 worker 并继续执行；worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，避免重复启动第二个写入进程，此时使用 `pi_task_resume` 显式恢复。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
 
 ## 作者与项目
 

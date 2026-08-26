@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .context import build_pi_prompt
-from .models import ArtifactRecord, TaskRecord, TaskStatus
+from .models import TaskRecord, TaskStatus
 from .registry import InvalidTaskTransition, TaskNotFoundError, TaskRegistry
 from .scheduler import TaskScheduler
 from .security import safe_error_summary
@@ -43,7 +43,7 @@ class PiTaskService:
         self,
         *,
         owner_key: str,
-        session_origin: str | None = None,
+        session_origin: str,
         task: str,
         context: Mapping[str, Any] | None = None,
         workspace: str | None = None,
@@ -69,7 +69,7 @@ class PiTaskService:
             prepared_context = dict(context or {})
             self.registry.create_task(
                 owner_key=owner_key.strip(),
-                session_origin=(session_origin or owner_key).strip(),
+                session_origin=session_origin.strip(),
                 prompt=task.strip(),
                 context=prepared_context,
                 workspace=str(normalized_workspace),
@@ -262,54 +262,6 @@ class PiTaskService:
         except Exception as exc:  # noqa: BLE001
             return self.error("task_list", safe_error_summary(exc))
 
-    def session_list(self, owner_key: str | None = None) -> dict[str, Any]:
-        try:
-            sessions = []
-            for task in self.registry.list_tasks(owner_key=owner_key):
-                if task.session_id or task.workspace:
-                    sessions.append(
-                        {
-                            "task_id": task.task_id,
-                            "session_id": task.session_id,
-                            "session_path": task.session_path,
-                            "status": task.status.value,
-                            "workspace": task.workspace,
-                        }
-                    )
-            return self.ok("session_list", status="ok", progress={"resource_type": "async_task_session", "count": len(sessions), "sessions": sessions})
-        except Exception as exc:  # noqa: BLE001
-            return self.error("session_list", safe_error_summary(exc))
-
-    def session_inspect(self, task_id: str) -> dict[str, Any]:
-        result = self.status(task_id)
-        result["operation"] = "session_inspect"
-        return result
-
-    async def session_resume(self, task_id: str) -> dict[str, Any]:
-        result = await self.resume(task_id)
-        result["operation"] = "session_resume"
-        return result
-
-    async def session_delete(self, task_id: str) -> dict[str, Any]:
-        result = await self.delete(task_id)
-        result["operation"] = "session_delete"
-        return result
-
-    def artifact_inspect(self, task_id: str) -> dict[str, Any]:
-        try:
-            task = self.registry.get_task(task_id)
-            return self.ok(
-                "artifact_inspect",
-                task_id=task_id,
-                status=task.status.value,
-                artifacts=[
-                    self._artifact_dict(item)
-                    for item in self.registry.list_artifacts(task_id)
-                ],
-            )
-        except Exception as exc:  # noqa: BLE001
-            return self.error("artifact_inspect", safe_error_summary(exc), task_id=task_id)
-
     async def _run_scheduler_operation(
         self,
         operation: str,
@@ -351,7 +303,6 @@ class PiTaskService:
         status: str | None = None,
         progress: Mapping[str, Any] | None = None,
         content: list[dict[str, Any]] | None = None,
-        artifacts: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return {
             "schema_version": "1",
@@ -361,7 +312,6 @@ class PiTaskService:
             "status": status,
             "progress": dict(progress or {}),
             "content": list(content or []),
-            "artifacts": list(artifacts or []),
             "error": None,
         }
 
@@ -380,7 +330,6 @@ class PiTaskService:
             "status": None,
             "progress": {},
             "content": [],
-            "artifacts": [],
             "error": {"type": "pi_task_error", "message": str(message)},
         }
 
@@ -403,18 +352,6 @@ class PiTaskService:
             "created_at": task.created_at,
             "updated_at": task.updated_at,
             "finished_at": task.finished_at,
-        }
-
-    @staticmethod
-    def _artifact_dict(item: ArtifactRecord) -> dict[str, Any]:
-        return {
-            "artifact_id": item.artifact_id,
-            "kind": item.kind,
-            "path": item.path,
-            "mime_type": item.mime_type,
-            "size_bytes": item.size_bytes,
-            "sha256": item.sha256,
-            "metadata": item.metadata,
         }
 
 

@@ -79,7 +79,13 @@ class RecoveryFactory:
 
 
 def _running_task(registry: TaskRegistry, *, task_id: str = "task-1", **kwargs):
-    task = registry.create_task(owner_key="owner", prompt="long task", task_id=task_id, **kwargs)
+    task = registry.create_task(
+        owner_key="owner",
+        session_origin="snowluma:GroupMessage:748796098",
+        prompt="long task",
+        task_id=task_id,
+        **kwargs,
+    )
     return registry.transition_status(task.task_id, TaskStatus.RUNNING)
 
 
@@ -117,10 +123,9 @@ def _assert_task_config(kwargs, *, task_id: str, agent_root: Path, provider: str
 
 
 def test_registry_retention_deletes_only_expired_terminal_rows(tmp_path: Path):
-    database = tmp_path / "tasks.db"
+    database = tmp_path / "tasks_v4.db"
     with TaskRegistry(database) as registry:
         old = _running_task(registry, task_id="old")
-        registry.add_artifact(old.task_id, kind="markdown", path="old.md")
         registry.transition_status(old.task_id, TaskStatus.COMPLETED)
         recent = _running_task(registry, task_id="recent")
         registry.transition_status(recent.task_id, TaskStatus.COMPLETED)
@@ -130,16 +135,16 @@ def test_registry_retention_deletes_only_expired_terminal_rows(tmp_path: Path):
         removed = registry.purge_expired_tasks(1, now=future)
 
         assert [item.task_id for item in removed] == ["old", "recent"]
-        assert registry.list_artifacts("active") == []
         assert registry.get_task(active.task_id).status is TaskStatus.RUNNING
         assert registry.list_tasks() == [registry.get_task(active.task_id)]
 
 
-def test_registry_migrates_and_persists_session_path(tmp_path: Path):
-    database = tmp_path / "tasks.db"
+def test_registry_persists_session_path(tmp_path: Path):
+    database = tmp_path / "tasks_v4.db"
     with TaskRegistry(database) as registry:
         task = registry.create_task(
             owner_key="owner",
+            session_origin="snowluma:FriendMessage:3268514224",
             prompt="x",
             session_path=str(tmp_path / "session.jsonl"),
         )
@@ -151,7 +156,7 @@ def test_registry_migrates_and_persists_session_path(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_restart_resumes_dead_worker_from_native_session(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     session = tmp_path / "session.jsonl"
     session.write_text('{"type":"session","id":"sid"}\n', encoding="utf-8")
     task = _running_task(
@@ -172,11 +177,8 @@ async def test_restart_resumes_dead_worker_from_native_session(tmp_path: Path):
 
     await scheduler.start()
     resumed = registry.get_task(task.task_id)
-    snapshot = registry.get_latest_snapshot(task.task_id)
-    assert snapshot is None
     assert resumed.status is TaskStatus.RUNNING
     assert resumed.process_id == 42001
-    assert registry.get_latest_snapshot(task.task_id) is None
     assert factory.created[-1].steer_messages
 
     await scheduler.shutdown()
@@ -185,16 +187,11 @@ async def test_restart_resumes_dead_worker_from_native_session(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_restart_keeps_logically_paused_task_paused(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     task = _running_task(
         registry,
         session_path=str(tmp_path / "missing-session.jsonl"),
         process_id=999999,
-    )
-    registry.record_snapshot(
-        task.task_id,
-        {"phase": "waiting"},
-        has_meaningful_event=False,
     )
     assert registry.get_task(task.task_id).status is TaskStatus.RUNNING
     scheduler = TaskScheduler(
@@ -216,9 +213,10 @@ async def test_restart_keeps_logically_paused_task_paused(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_submit_passes_task_scoped_worker_config_to_new_worker(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     task = registry.create_task(
         owner_key="owner",
+        session_origin="snowluma:FriendMessage:3268514224",
         prompt="long task",
         context=_worker_context(provider="submit-provider", model="submit-model"),
     )
@@ -249,11 +247,12 @@ async def test_submit_passes_task_scoped_worker_config_to_new_worker(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_explicit_resume_restarts_orphaned_session(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     session = tmp_path / "session.jsonl"
     session.write_text('{"type":"session","id":"sid"}\n', encoding="utf-8")
     task = registry.create_task(
         owner_key="owner",
+        session_origin="snowluma:FriendMessage:3268514224",
         prompt="long task",
         session_path=str(session),
         workspace=str(tmp_path / "workspace"),
@@ -281,11 +280,12 @@ async def test_explicit_resume_restarts_orphaned_session(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_resume_rebuilds_task_scoped_worker_config(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     session = tmp_path / "session.jsonl"
     session.write_text('{"type":"session","id":"sid"}\n', encoding="utf-8")
     task = registry.create_task(
         owner_key="owner",
+        session_origin="snowluma:FriendMessage:3268514224",
         prompt="long task",
         status=TaskStatus.ORPHANED,
         session_path=str(session),
@@ -320,7 +320,7 @@ async def test_resume_rebuilds_task_scoped_worker_config(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_scheduler_cleanup_removes_owned_workspace_and_sessions(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     task = _running_task(registry, task_id="expired")
     registry.transition_status(task.task_id, TaskStatus.COMPLETED)
     workspace_root = tmp_path / "workspaces"

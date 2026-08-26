@@ -10,7 +10,7 @@ from .rpc import (
     PiRpcAdapter,
     PiRpcError,
 )
-from .models import ArtifactRecord, SnapshotRecord, TaskRecord, TaskStatus
+from .models import TaskRecord, TaskStatus
 from .registry import InvalidTaskTransition, TaskNotFoundError, TaskRegistry, TaskRegistryError
 from .scheduler import TaskScheduler
 from .service import PiTaskService
@@ -37,13 +37,11 @@ from .worker import (
 )
 
 __all__ = [
-    "ArtifactRecord",
     "InvalidTaskTransition",
     "PiEvent",
     "PiProcessState",
     "PiRpcAdapter",
     "PiRpcError",
-    "SnapshotRecord",
     "TaskNotFoundError",
     "TaskRecord",
     "TaskRegistry",

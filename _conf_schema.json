@@ -81,14 +81,14 @@
   "state_directory": {
     "type": "string",
     "description": "桥接服务的持久化状态目录",
-    "hint": "默认使用 ~/.pi/astrbot_plugin_pi_agent，存放 SQLite 任务注册表、任务会话、每个任务的 Agent 配置、工作区和 artifact 元数据。",
+    "hint": "默认使用 ~/.pi/astrbot_plugin_pi_agent，存放 SQLite 任务注册表、任务会话、每个任务的 Agent 配置和工作区。",
     "default": "~/.pi/astrbot_plugin_pi_agent"
   },
   "task_database": {
     "type": "string",
     "description": "SQLite WAL 任务注册表路径",
-    "hint": "默认使用 ~/.pi/astrbot_plugin_pi_agent/tasks.db。父目录不存在时会自动创建。",
-    "default": "~/.pi/astrbot_plugin_pi_agent/tasks.db"
+    "hint": "当前版本专用数据库。旧版 tasks.db 不兼容，请使用全新路径。",
+    "default": "~/.pi/astrbot_plugin_pi_agent/tasks_v4.db"
   },
   "workspace_root": {
     "type": "string",
@@ -109,7 +109,7 @@
   },
   "session_retention_hours": {
     "type": "int",
-    "description": "已结束任务元数据和托管 artifact 的保留时长",
+    "description": "已结束任务元数据和任务资源的保留时长",
     "hint": "只有已完成、失败和已取消的任务会参与清理。运行中、暂停中和 orphaned 状态的任务会保留。",
     "default": 24,
     "slider": {

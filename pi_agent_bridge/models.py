@@ -1,4 +1,4 @@
-"""Data contracts used by the persistent Pi task registry."""
+"""Durable contracts for isolated Pi tasks."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 
 
 class TaskStatus(str, Enum):
-    """Durable task states understood by the bridge."""
+    """Lifecycle states managed by the Pi task bridge."""
 
     QUEUED = "queued"
     RUNNING = "running"
@@ -21,6 +21,8 @@ class TaskStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class TaskRecord:
+    """One persisted Pi task and its original reply destination."""
+
     task_id: str
     owner_key: str
     session_origin: str
@@ -28,37 +30,10 @@ class TaskRecord:
     prompt: str
     context: dict[str, Any]
     session_id: str | None
+    session_path: str | None
     process_id: int | None
     workspace: str | None
     event_cursor: str | None
-    no_meaningful_event_count: int
-    latest_snapshot_id: int | None
-    latest_snapshot_fingerprint: str | None
     created_at: str
     updated_at: str
     finished_at: str | None
-    session_path: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SnapshotRecord:
-    snapshot_id: int
-    task_id: str
-    event_cursor: str | None
-    payload: dict[str, Any]
-    has_meaningful_event: bool
-    fingerprint: str
-    created_at: str
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactRecord:
-    artifact_id: int
-    task_id: str
-    kind: str
-    path: str | None
-    mime_type: str | None
-    size_bytes: int | None
-    sha256: str | None
-    metadata: dict[str, Any]
-    created_at: str

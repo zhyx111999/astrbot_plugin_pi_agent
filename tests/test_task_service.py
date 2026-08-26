@@ -93,25 +93,24 @@ class BlockingScheduler:
 
 @pytest.mark.asyncio
 async def test_shutdown_finalizes_queued_launch(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = BlockingScheduler(registry)
     service = PiTaskService(registry, scheduler)
 
-    created = await service.create_task(owner_key="qq:1", task="queued")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="queued")
     task_id = created["task_id"]
     await asyncio.sleep(0)
     await service.shutdown()
 
     task = registry.get_task(task_id)
     assert task.status is TaskStatus.FAILED
-    assert registry.get_latest_snapshot(task_id) is None
     registry.close()
 
 
 @pytest.mark.asyncio
 async def test_create_returns_before_worker_and_repeated_observations_stay_running(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -120,7 +119,7 @@ async def test_create_returns_before_worker_and_repeated_observations_stay_runni
     )
     service = PiTaskService(registry, scheduler)
 
-    created = await service.create_task(owner_key="qq:1", task="research")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="research")
     assert created["ok"] is True
     task_id = created["task_id"]
     assert created["status"] == TaskStatus.QUEUED.value
@@ -142,7 +141,7 @@ async def test_create_returns_before_worker_and_repeated_observations_stay_runni
 @pytest.mark.asyncio
 async def test_clean_worker_exit_converges_to_completed(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -151,7 +150,7 @@ async def test_clean_worker_exit_converges_to_completed(tmp_path: Path):
     )
     service = PiTaskService(registry, scheduler)
 
-    created = await service.create_task(owner_key="qq:1", task="exit cleanly")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="exit cleanly")
     task_id = created["task_id"]
     await asyncio.sleep(0)
     adapter = FakeAdapter.instances[0]
@@ -170,32 +169,9 @@ async def test_clean_worker_exit_converges_to_completed(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_poll_records_a_bounded_remote_pi_state_snapshot(tmp_path: Path):
-    FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
-    scheduler = TaskScheduler(
-        registry,
-        workspace_root=tmp_path / "workspaces",
-        adapter_factory=FakeAdapter,
-        poll_interval_seconds=3600,
-    )
-    service = PiTaskService(registry, scheduler)
-
-    created = await service.create_task(owner_key="qq:1", task="inspect")
-    task_id = created["task_id"]
-    await asyncio.sleep(0)
-    await scheduler.poll_task(task_id)
-    assert registry.get_latest_snapshot(task_id) is None
-
-    await service.shutdown()
-    await scheduler.shutdown()
-    registry.close()
-
-
-@pytest.mark.asyncio
 async def test_main_model_poll_explicitly_checks_worker_without_returning_events(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -204,18 +180,16 @@ async def test_main_model_poll_explicitly_checks_worker_without_returning_events
     )
     service = PiTaskService(registry, scheduler)
 
-    created = await service.create_task(owner_key="qq:1", task="inspect")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="inspect")
     task_id = created["task_id"]
     await asyncio.sleep(0)
     adapter = FakeAdapter.instances[0]
     calls_after_start = adapter.state_calls
-    snapshot_before = registry.get_latest_snapshot(task_id)
 
     result = await service.poll(task_id)
 
     assert result["ok"] is True
     assert adapter.state_calls == calls_after_start + 1
-    assert registry.get_latest_snapshot(task_id) == snapshot_before
     assert registry.get_task(task_id).event_cursor == "0"
     assert result["content"] == []
     assert result["progress"]["session_tail"] == ""
@@ -229,7 +203,7 @@ async def test_main_model_poll_explicitly_checks_worker_without_returning_events
 @pytest.mark.asyncio
 async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -238,7 +212,7 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
     )
     service = PiTaskService(registry, scheduler)
 
-    created = await service.create_task(owner_key="qq:1", task="inspect")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="inspect")
     task_id = created["task_id"]
     await asyncio.sleep(0)
     adapter = FakeAdapter.instances[0]
@@ -267,8 +241,6 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
     session_path.write_bytes('{"type":"message","text":"progress"}\n'.encode())
 
     await scheduler.poll_task(task_id)
-    observed = registry.get_latest_snapshot(task_id)
-    assert observed is None
 
     first = await service.poll(task_id)
     second = await service.poll(task_id)
@@ -287,7 +259,7 @@ async def test_repeated_main_model_polls_do_not_overwrite_observer_progress(tmp_
 @pytest.mark.asyncio
 async def test_session_search_returns_bounded_context(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -295,7 +267,7 @@ async def test_session_search_returns_bounded_context(tmp_path: Path):
         poll_interval_seconds=3600,
     )
     service = PiTaskService(registry, scheduler)
-    created = await service.create_task(owner_key="qq:1", task="inspect")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="inspect")
     task_id = created["task_id"]
     await asyncio.sleep(0)
     adapter = FakeAdapter.instances[-1]
@@ -318,7 +290,7 @@ async def test_session_search_returns_bounded_context(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_provider_error_remains_in_native_session(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "provider-error-tasks.db")
+    registry = TaskRegistry(tmp_path / "provider-error-tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -326,7 +298,7 @@ async def test_provider_error_remains_in_native_session(tmp_path: Path):
         poll_interval_seconds=3600,
     )
     service = PiTaskService(registry, scheduler)
-    created = await service.create_task(owner_key="qq:1", task="inspect")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="inspect")
     task_id = created["task_id"]
     await asyncio.sleep(0)
     adapter = FakeAdapter.instances[-1]
@@ -346,60 +318,9 @@ async def test_provider_error_remains_in_native_session(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_status_repeated_reads_do_not_repeat_snapshot_content(tmp_path: Path):
-    registry = TaskRegistry(tmp_path / "status-tasks.db")
-    scheduler = TaskScheduler(
-        registry,
-        workspace_root=tmp_path / "workspaces",
-        adapter_factory=FakeAdapter,
-        poll_interval_seconds=3600,
-    )
-    service = PiTaskService(registry, scheduler)
-    created = await service.create_task(owner_key="qq:1", task="inspect")
-    task_id = created["task_id"]
-    await asyncio.sleep(0)
-
-    class Event:
-        meaningful = True
-        payload = {
-            "type": "message_update",
-            "assistantMessageEvent": {"type": "text_delta", "delta": "once"},
-        }
-
-        def as_dict(self):
-            return {"cursor": 1, "meaningful": True, "payload": self.payload}
-
-    adapter = FakeAdapter.instances[-1]
-    session_path = Path(adapter.session_path)
-    session_path.parent.mkdir(parents=True, exist_ok=True)
-    session_path.write_bytes('{"type":"message_update","delta":"once"}\n'.encode())
-
-    await scheduler.poll_task(task_id)
-
-    status = service.status(task_id)
-    repeated_status = service.status(task_id)
-    first_poll = await service.poll(task_id)
-    repeated_poll = await service.poll(task_id)
-
-    assert status["content"] == []
-    assert repeated_status["content"] == []
-    assert "snapshot" not in status["progress"]
-    assert "snapshot" not in repeated_status["progress"]
-    assert first_poll["content"] == []
-    assert repeated_poll["content"] == []
-    assert service.recent_session_tail(task_id) == (
-        '{"type":"message_update","delta":"once"}\n'
-    )
-
-    await service.shutdown()
-    await scheduler.shutdown()
-    registry.close()
-
-
-@pytest.mark.asyncio
 async def test_terminal_observation_never_notifies_chat(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -407,7 +328,7 @@ async def test_terminal_observation_never_notifies_chat(tmp_path: Path):
         poll_interval_seconds=3600,
     )
     service = PiTaskService(registry, scheduler)
-    created = await service.create_task(owner_key="qq:1", task="inspect")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="inspect")
     task_id = created["task_id"]
     await asyncio.sleep(0)
 
@@ -424,7 +345,7 @@ async def test_terminal_observation_never_notifies_chat(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_resume_steers_same_worker_and_cancel_delete_cleanup(tmp_path: Path):
     FakeAdapter.instances.clear()
-    registry = TaskRegistry(tmp_path / "tasks.db")
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
         registry,
         workspace_root=tmp_path / "workspaces",
@@ -433,7 +354,7 @@ async def test_resume_steers_same_worker_and_cancel_delete_cleanup(tmp_path: Pat
     )
     service = PiTaskService(registry, scheduler)
 
-    created = await service.create_task(owner_key="qq:1", task="code")
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="code")
     task_id = created["task_id"]
     await asyncio.sleep(0)
     await scheduler.poll_task(task_id)

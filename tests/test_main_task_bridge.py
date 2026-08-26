@@ -118,8 +118,13 @@ def test_config_bool_accepts_serialized_values(plugin):
 async def test_task_status_initializes_registry_before_visibility_check(plugin, tmp_path):
     owner_event = _event("qq:owner")
     other_event = _event("qq:other")
-    registry = TaskRegistry(tmp_path / "tasks.db")
-    task = registry.create_task(owner_key="qq:owner", prompt="long task", status=TaskStatus.QUEUED)
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
+    task = registry.create_task(
+        owner_key="qq:owner",
+        session_origin="snowluma:FriendMessage:owner",
+        prompt="long task",
+        status=TaskStatus.QUEUED,
+    )
     plugin._task_registry = registry
     plugin.pi_task_service = MagicMock()
     plugin.pi_task_service.status.return_value = {
@@ -254,7 +259,6 @@ async def test_pi_agent_rejects_mcp_config_with_structured_envelope(plugin):
     assert result["status"] is None
     assert result["progress"] == {}
     assert result["content"] == []
-    assert result["artifacts"] == []
     assert result["error"]["type"] == "pi_task_error"
     assert "MCP integration is unsupported" in result["error"]["message"]
     service.create_task.assert_not_awaited()

@@ -155,8 +155,7 @@ class PiAgentPlugin(Star):
         if self.pi_task_service is not None:
             return self.pi_task_service
 
-        # Import lazily so plugin construction stays compatible with hosts
-        # that instantiate plugins outside an active event loop.
+        # Import lazily so plugin construction stays outside an active event loop.
         import asyncio
 
         if self._task_service_lock is None:
@@ -179,7 +178,7 @@ class PiAgentPlugin(Star):
 
         database = self._config_value("task_database", "")
         if not database:
-            database = str(state_root / "tasks.db")
+            database = str(state_root / "tasks_v4.db")
         registry = TaskRegistry(database)
         workspace_root = self._config_value("workspace_root", "")
         if not workspace_root:
@@ -446,7 +445,6 @@ class PiAgentPlugin(Star):
                 "status": None,
                 "progress": {},
                 "content": [],
-                "artifacts": [],
                 "error": {
                     "type": "pi_task_error",
                     "message": safe_error_summary(message),
@@ -666,7 +664,7 @@ class PiAgentPlugin(Star):
         """Resume an existing Pi task/session without rebuilding its context.
 
         The original task keeps its provider, model, persona, conversation
-        snapshot, and event history. Only the owner or an administrator may
+        session, and task history. Only the owner or an administrator may
         perform this write operation.
 
         Args:
@@ -719,36 +717,6 @@ class PiAgentPlugin(Star):
         except Exception as exc:  # noqa: BLE001
             return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
 
-    @filter.llm_tool(name="pi_session_list")
-    async def pi_session_list(self, event: AstrMessageEvent) -> str:
-        """List every registered async Pi session for AstrBot to inspect.
-
-        This is a read-only directory operation. It does not create or
-        reconfigure any Pi session.
-        """
-        operation = "session_list"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied)
-        try:
-            service = await self._task_service_or_error()
-            return self._bridge_dump(service.session_list(owner_key=None))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc))
-
-    @filter.llm_tool(name="pi_session_inspect")
-    async def pi_session_inspect(self, event: AstrMessageEvent, session_id: str) -> str:
-        """Inspect an async Pi task session by task ID.
-
-        Args:
-            session_id(string): Task ID returned by pi_agent
-        """
-        operation = "session_inspect"
-        try:
-            service = await self._service_for_task(event, session_id)
-            return self._bridge_dump(service.session_inspect(session_id))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=session_id)
-
     @filter.llm_tool(name="pi_session_search")
     async def pi_session_search(
         self,
@@ -772,54 +740,3 @@ class PiAgentPlugin(Star):
                 safe_error_summary(exc),
                 task_id=session_id,
             )
-
-    @filter.llm_tool(name="pi_session_resume")
-    async def pi_session_resume(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Resume an existing async Pi session without rebuilding its context.
-
-        This is a write operation for the task owner or an AstrBot
-        administrator.
-
-        Args:
-            task_id(string): Task id returned by pi_agent
-        """
-        operation = "session_resume"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied, task_id=task_id)
-        try:
-            service = await self._service_for_task(event, task_id, write=True)
-            return self._bridge_dump(await service.session_resume(task_id))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
-
-    @filter.llm_tool(name="pi_session_delete")
-    async def pi_session_delete(self, event: AstrMessageEvent, session_id: str) -> str:
-        """Delete an async Pi task session by task ID.
-
-        Args:
-            session_id(string): Task ID returned by pi_agent
-        """
-        operation = "session_delete"
-        try:
-            service = await self._service_for_task(event, session_id, write=True)
-            return self._bridge_dump(await service.session_delete(session_id))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=session_id)
-
-    @filter.llm_tool(name="pi_artifact_inspect")
-    async def pi_artifact_inspect(self, event: AstrMessageEvent, task_id: str) -> str:
-        """Inspect artifacts produced by an async Pi task.
-
-        This is read-only and does not modify or reconfigure the Pi session.
-
-        Args:
-            task_id(string): Task id returned by pi_agent
-        """
-        operation = "artifact_inspect"
-        if denied := self._require_task_permission(event):
-            return self._bridge_error(operation, denied, task_id=task_id)
-        try:
-            service = await self._service_for_task(event, task_id)
-            return self._bridge_dump(service.artifact_inspect(task_id))
-        except Exception as exc:  # noqa: BLE001
-            return self._bridge_error(operation, safe_error_summary(exc), task_id=task_id)
