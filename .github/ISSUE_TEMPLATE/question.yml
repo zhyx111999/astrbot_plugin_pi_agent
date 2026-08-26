@@ -1,0 +1,81 @@
+name: Question
+description: Ask for help with installing, configuring, or using the AstrBot Pi Agent plugin.
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the README and existing issues first. Include enough context for others to answer without exposing secrets or private data.
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Area
+      description: Choose every area related to your question.
+      multiple: true
+      options:
+        - Installation or plugin startup
+        - Pi runtime or worker setup
+        - Provider, model, or authentication configuration
+        - Task creation, status, or lifecycle
+        - Session, workspace, or file handling
+        - Permissions or task ownership
+        - AstrBot event or conversation integration
+        - Documentation or configuration guidance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What would you like to know?
+      description: Ask one focused question and describe the outcome you are trying to achieve.
+      placeholder: "How can I ...?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and what you tried
+      description: Describe your setup, relevant configuration, commands, and troubleshooting steps. Remove secrets and private paths.
+      placeholder: |
+        - Plugin version or commit:
+        - AstrBot/Pi/Node.js versions:
+        - Operating system or deployment:
+        - What I tried:
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result or answer
+      description: Explain what a useful answer would help you accomplish.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or examples
+      description: Paste concise logs, task status, configuration excerpts, or screenshots. Redact tokens, credentials, private paths, and personal data.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checklist
+      options:
+        - label: I searched the README and existing issues before asking this question.
+          required: true
+        - label: I provided enough context for someone to answer without guessing the setup.
+          required: true
+        - label: I removed secrets, tokens, private paths, and personal data from logs or snippets.
+          required: true
+        - label: I will follow up with requested details or report whether the answer resolved my question.
+          required: false

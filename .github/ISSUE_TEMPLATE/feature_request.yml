@@ -1,0 +1,87 @@
+name: Feature request
+description: Suggest a new capability or workflow improvement for the AstrBot Pi Agent plugin.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for new task workflows, AstrBot integration behavior, configuration options, runtime support, or developer experience improvements.
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Area
+      description: Choose every area that best matches the request.
+      multiple: true
+      options:
+        - Task creation or lifecycle
+        - Worker control or recovery
+        - Session, polling, or task history
+        - AstrBot event or conversation integration
+        - Provider, model, or runtime support
+        - Workspace, path, or permission handling
+        - Configuration and administration
+        - Observability or diagnostics
+        - Documentation or setup guidance
+        - Developer workflow or testing
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: What limitation, repeated manual work, or user pain would this solve?
+      placeholder: "Users currently have to ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or interface you want the plugin to provide.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Mention workarounds, manual steps, other plugins, or designs you considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and migration considerations
+      description: Note expected AstrBot/Pi versions, operating systems, provider behavior, task ownership, session privacy, or configuration migration impact.
+      placeholder: "This should remain compatible with ... and should not change ..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Example usage
+      description: Provide sample prompts, tool arguments, task status, configuration, output, or documentation text if useful.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checklist
+      options:
+        - label: I searched existing issues and did not find the same request.
+          required: true
+        - label: I described the user-facing behavior and its compatibility implications clearly enough to evaluate.
+          required: true
+        - label: I considered task ownership, session privacy, and safe workspace boundaries where applicable.
+          required: true
+        - label: I am willing to submit a pull request or help test this feature.
+          required: false
