@@ -79,7 +79,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 | --- | ---: | --- |
 | `enable_async_tasks` | `true` | 开启独立的 Pi 后台任务桥。关闭后不创建异步任务 worker。 |
 | `pi_model` | `""` | 只选择一个 AstrBot 已配置的 Provider/model 绑定；不再从这里读取或覆盖 Pi 的推理、上下文、输出和采样参数。 |
-| `pi_thinking_level` | `max` | Pi 官方 thinking level：`off`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。当前两个 gpt-5.6 模型均使用 `max`。 |
+| `pi_thinking_level` | `max` | Pi 官方 thinking level：`off`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`；实际可用档位由所选模型和 Pi 官方运行时决定。 |
 | `pi_context_window` | `0` | Pi 上下文窗口；0 表示不写入，由 Pi 默认值决定。 |
 | `pi_max_output_tokens` | `0` | Pi 最大输出 token；0 表示不写入，由 Pi 默认值决定。 |
 | `pi_input_modalities` | `["text", "image"]` | Pi 模型输入模态。当前支持 text/image。 |
@@ -87,7 +87,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 | `pi_top_p` | `1.0` | Pi top-p。 |
 | `pi_top_k` | `0` | Pi top-k；0 表示不写入。 |
 | `pi_min_p` | `0.0` | Pi min-p；0 表示不写入。 |
-| `pi_sampling_params` | `{}` | 额外写入 Pi `samplingParams` 的 JSON 参数。 |
+| `pi_sampling_params` | `""` | 额外写入 Pi `samplingParams` 的 JSON 参数；留空表示不额外写入。 |
 | `state_directory` | `~/.pi/astrbot_plugin_pi_agent` | 桥接状态目录，存放任务数据库、会话、Agent 配置和工作区。 |
 | `task_database` | `~/.pi/astrbot_plugin_pi_agent/tasks_v4.db` | 当前版本专用 SQLite 任务注册表路径。数据库必须由当前版本新建，旧版 tasks.db 不兼容。 |
 | `workspace_root` | `~/.pi/astrbot_plugin_pi_agent/workspaces` | 任务工作区根目录，每个任务使用独立子目录。 |
@@ -101,7 +101,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 
 异步任务的 worker 生命周期错误会使任务转为 `failed`；AstrBot 或插件重启时，worker 已退出会从 native session 启动新 worker 并继续执行；worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，此时使用 `pi_task_resume` 显式恢复。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
 
-`pi_task_status` 只返回 AstrBot 任务和 native session 元数据，不返回会话内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限 worker 状态检查，并返回最近 8,000 个字符的 native session raw tail；`pi_session_search(session_id, keyword)` 按关键词返回匹配位置上下文，总长不超过 8,000 个字符。两者都不做摘要、改写、分类、错误提炼或结果判断。
+`pi_task_status` 只返回 AstrBot 任务和 native session 元数据，不返回会话内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限 worker 状态检查，并返回最近 8,000 个字符的 native session raw tail；`pi_session_search(session_id, keyword)` 按关键词返回匹配位置上下文，其中 `session_id` 当前传入 `pi_agent` 返回的 `task_id`，总长不超过 8,000 个字符。两者都不做摘要、改写、分类、错误提炼或结果判断。
 
 Pi 官方运行时保持不变。插件不会扫描或继承 AstrBot 的 Skill、MCP、工具或扩展资源。配置的每个 Skill 目录会在对应 worker 的启动命令中作为独立的 `--skill <path>` 参数传递。填写方式是：在 `pi_skill_paths` 列表中逐项填写包含 `SKILL.md` 的目录绝对路径。
 
@@ -118,14 +118,12 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 | `pi_agent(prompt, workspace?)` | 创建新的隔离 Pi 任务，适合通用 Agent 执行代码、脚本、研究、自动化、文件操作、工具驱动流程和其他长期、多步骤工作；立即返回 `task_id`。 |
 | `pi_task_status(task_id)` | 读取 AstrBot 任务和 native session 控制元数据，不读取会话内容。 |
 | `pi_task_list()` | 列出全部登记的异步 Pi 任务，包含 owner 和 task/session 元数据。 |
-| `pi_session_search(session_id, keyword)` | 按关键词检索对应 Pi 原生 session，返回匹配位置上下文，总长度最多 8,000 个字符。 |
+| `pi_session_search(session_id, keyword)` | 按关键词检索对应 Pi 原生 session；`session_id` 当前传入 `pi_agent` 返回的 `task_id`，返回匹配位置上下文，总长度最多 8,000 个字符。 |
 | `pi_task_poll(task_id)` | 由 AstrBot 主动请求一次短 Pi 状态检查，并返回最近 8,000 字符的 native session raw tail；不做解释。 |
 | `pi_task_follow_up(task_id, message)` | owner 或管理员使用 Pi steer 向活动任务追加要求。 |
 | `pi_task_resume(task_id)` | owner 或管理员恢复可恢复任务。 |
 | `pi_task_cancel(task_id)` | owner 或管理员取消 worker，但保留任务历史。 |
 | `pi_task_delete(task_id)` | owner 或管理员取消并删除任务元数据及任务资源。 |
-| `pi_session_search(session_id, keyword)` | 按关键词检索对应 Pi 原生 session，返回匹配位置上下文，总长度最多 8,000 个字符。 |
-| `pi_task_poll(task_id)` | 由 AstrBot 主动请求一次短 Pi 状态检查，并返回最近 8,000 字符的 native session raw tail；不做解释。 |
 
 ```json
 {
