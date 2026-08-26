@@ -1,0 +1,144 @@
+name: Bug report
+description: Report a problem with the AstrBot Pi Agent plugin, Pi workers, task lifecycle, or task updates.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Clear reproduction steps, relevant versions, and redacted logs help maintainers investigate the plugin and its Pi worker bridge faster.
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Choose every area that best matches the problem.
+      multiple: true
+      options:
+        - Plugin startup or AstrBot integration
+        - pi_agent task creation
+        - Pi worker or JSONL RPC
+        - Task status, polling, or follow-up
+        - Task recovery, cancellation, or retention
+        - Task registry, SQLite, or workspace
+        - Session wakeup or normal event pipeline
+        - Provider, model, or runtime binding
+        - Permissions or task ownership
+        - Configuration, installation, or paths
+        - Windows, Linux, WSL, or proxy behavior
+        - Documentation or packaging
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: plugin_version
+    attributes:
+      label: Plugin version or commit
+      description: Use the version from metadata.yaml, a release tag, or the commit SHA you tested.
+      placeholder: "v0.3.4, release tag, or commit SHA"
+    validations:
+      required: true
+
+  - type: input
+    id: astrbot_version
+    attributes:
+      label: AstrBot version
+      description: Include the AstrBot version shown by your installation.
+      placeholder: "Example: 4.27.1"
+    validations:
+      required: true
+
+  - type: input
+    id: pi_version
+    attributes:
+      label: Pi version
+      description: Include the Pi CLI version used by the worker, if the issue reaches worker startup.
+      placeholder: "Example: 0.84.2"
+    validations:
+      required: false
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js version
+      description: Include the Node.js version used to run Pi, if relevant.
+      placeholder: "Example: 22.19.0"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system or deployment environment
+      multiple: false
+      options:
+        - Linux
+        - Windows
+        - WSL
+        - macOS
+        - Docker or container
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and why it is incorrect.
+      placeholder: "The task returned ..., but the worker or AstrBot session ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe what the plugin should have done instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the AstrBot tool call, task state transition, configuration change, or restart sequence that triggers the problem.
+      placeholder: |
+        1. Configure ...
+        2. Call pi_agent with ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Minimal prompt, configuration, task ID, or path layout
+      description: Paste the smallest safe example that reproduces the problem. Remove tokens, private paths, and other sensitive data.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Paste relevant AstrBot/Pi logs, RPC output, traceback, task status, or screenshots. Redact secrets and private data.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checklist
+      options:
+        - label: I searched existing issues and did not find the same report.
+          required: true
+        - label: I included enough information for maintainers to reproduce or investigate the problem.
+          required: true
+        - label: I removed secrets, tokens, private paths, and personal data from logs or snippets.
+          required: true
+        - label: I am willing to help test a fix or submit a pull request.
+          required: false
