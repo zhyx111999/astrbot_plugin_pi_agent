@@ -258,9 +258,9 @@ class TaskScheduler:
     async def recover_existing_tasks(self) -> list[str]:
         """Recover persisted workers from their native sessions after restart.
 
-        Pi's stdio transport cannot be reattached by PID. A worker with a
-        missing process is restarted from its persisted native session; a live
-        worker is marked orphaned rather than receiving a second writer.
+        Pi's stdio transport cannot be reattached by PID. Still-running tasks
+        whose worker is gone are restarted from the native session. Interrupted
+        `orphaned` tasks are left stopped until an explicit resume.
         """
 
         async with self._recovery_lock:
@@ -580,22 +580,19 @@ class TaskScheduler:
         cursor = str(getattr(adapter, "event_cursor", task.event_cursor or "0"))
         updated = self.registry.update_event_cursor(task_id, cursor)
 
-        # Do not inspect or persist Pi event payloads. Only the child-process
-        # lifecycle is reflected in AstrBot task metadata; the native session
-        # remains the sole source of task content.
-        returncode = getattr(adapter, "returncode", None)
+        # Do not inspect or persist Pi event payloads. Completion is only the
+        # native agent_end signal. A worker that disappears without that event
+        # was interrupted and waits for an explicit resume.
         agent_finished = any(
             getattr(event, "type", None) == "agent_end" for event in events
         )
-        if not adapter.is_running:
-            if returncode == 0:
-                updated = self.registry.transition_status(task_id, TaskStatus.COMPLETED)
-            elif returncode is not None:
-                updated = self.registry.transition_status(task_id, TaskStatus.FAILED)
-        elif agent_finished and updated.status in _ACTIVE_STATUSES:
+        if agent_finished and updated.status in _ACTIVE_STATUSES:
             updated = self.registry.transition_status(task_id, TaskStatus.COMPLETED)
-        if updated.status in _TERMINAL_STATUSES:
             await self._notify_terminal_task(updated, reason="worker_terminal")
+            await self._release_terminal_worker(task_id, adapter)
+        elif not adapter.is_running and updated.status in _ACTIVE_STATUSES:
+            updated = self.registry.transition_status(task_id, TaskStatus.ORPHANED)
+            await self._notify_terminal_task(updated, reason="worker_interrupted")
             await self._release_terminal_worker(task_id, adapter)
         return updated
 

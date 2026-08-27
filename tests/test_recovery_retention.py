@@ -269,6 +269,8 @@ async def test_explicit_resume_restarts_orphaned_session(tmp_path: Path):
     )
 
     await scheduler.start()
+    assert registry.get_task(task.task_id).status is TaskStatus.ORPHANED
+    assert factory.created == []
     resumed = await scheduler.resume(task.task_id)
     assert resumed.status is TaskStatus.RUNNING
     assert factory.created[0].kwargs["session_path"] == str(session)

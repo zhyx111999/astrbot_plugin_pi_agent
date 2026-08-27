@@ -111,7 +111,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 | `pi_extension_paths` | `[]` | 追加的 Pi 用户扩展文件或目录；每个路径单独一项，按 Pi 官方 `--extension` 参数加载。 |
 | `pi_mcp_config_paths` | `[]` | 外部 Pi 扩展或 MCP 配置路径。当前版本不支持加载，必须保持为空。 |
 
-异步任务的 worker 生命周期错误会使任务转为 `failed`；AstrBot 或插件重启时，worker 已退出会从 native session 启动新 worker 并继续执行；worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，此时使用 `pi_task_resume` 显式恢复。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
+异步任务的 worker 生命周期错误会使任务转为 `failed`。只有 Pi 原生 `agent_end` 才会标为 `completed`；worker 被杀掉或异常退出且没有 `agent_end` 时记为 `orphaned`，下次启动不会自动续跑，需要 `pi_task_resume`。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
 
 `pi_task_status` 只返回 AstrBot 任务和 native session 元数据，不返回会话内容。`pi_task_poll` 是 AstrBot 主动发起的一次受限 worker 状态检查，并返回最近 8,000 个字符的 native session raw tail；`pi_session_search(session_id, keyword)` 按关键词返回匹配位置上下文，其中 `session_id` 当前传入 `pi_agent` 返回的 `task_id`，总长不超过 8,000 个字符。两者都不做摘要、改写、分类、错误提炼或结果判断。
 
@@ -167,7 +167,7 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 
 ## 恢复、保留和删除
 
-AstrBot 或插件重启时会恢复未终态任务：worker 已退出时，插件从 native session 启动新 worker 并继续执行；worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，避免重复启动第二个写入进程，此时使用 `pi_task_resume` 显式恢复。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
+只有 Pi 原生会话出现 `agent_end` 才会把任务标为 `completed`。worker 被重启、杀掉或异常退出且没有 `agent_end` 时，任务记为 `orphaned`（中止），不会当成完成，也不会在下次启动时自动续跑；需要用户或主模型显式调用 `pi_task_resume`。AstrBot 或插件重启时，仍在 `running` 且 worker 已退出的任务会从 native session 续跑；worker 仍存活但标准 stdin/stdout RPC 无法安全接管时也会标为 `orphaned`。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
 
 ## 市场分类与兼容声明
 

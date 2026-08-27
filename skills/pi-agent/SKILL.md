@@ -36,7 +36,7 @@ Terminal wakeups are submitted through AstrBot's public event factory into the o
 7. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
 8. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
-The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again. If AstrBot or the plugin reloads, an unfinished task is restarted from its native session and explicitly continued when the old worker is no longer alive. Terminal wakeups are only for completed, failed, cancelled, and orphaned states.
+The plugin does not create semantic progress summaries or automatically pause a task for lack of meaningful events. A `running` result is not an instruction to poll again in the same turn; end the turn and let the next user/model turn decide when to inspect again. If AstrBot or the plugin reloads, a still-`running` task may be restarted from its native session. A worker that exited without `agent_end` is marked `orphaned` and is not auto-resumed; use `pi_task_resume` only when the user asks to continue. Terminal wakeups are only for completed, failed, cancelled, and orphaned states.
 
 ## Async Task Tools
 
@@ -74,4 +74,4 @@ Read and write permissions are separate:
 
 ## Silent Worker Boundary
 
-Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer wakes the main model only when a changed native-session tail is available, at the configurable interval. `status` exposes task-control metadata; `poll` and `pi_session_search` expose bounded raw session context capped at 8,000 characters. A clean worker exit is converged to `completed`; a nonzero worker exit is `failed`.
+Pi's JSONL events are consumed internally only for transport acknowledgements and minimal worker lifecycle transitions. The native Pi session is the sole task-content source exposed to AstrBot. The observer wakes the main model only when a changed native-session tail is available, at the configurable interval. `status` exposes task-control metadata; `poll` and `pi_session_search` expose bounded raw session context capped at 8,000 characters. A task becomes `completed` only after Pi emits `agent_end`. If the worker exits or is killed without that event, the task is marked `orphaned` and waits for an explicit `pi_task_resume`.

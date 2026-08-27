@@ -27,6 +27,7 @@ class FakeAdapter:
         self.cancelled = False
         self.returncode = None
         self.state_calls = 0
+        self.events: list[object] = []
         self.session_path = str(Path(kwargs.get("session_dir", "/tmp")) / "session.jsonl")
         self.__class__.instances.append(self)
 
@@ -48,7 +49,9 @@ class FakeAdapter:
         return "prompt-id"
 
     def drain_events(self, *, after_cursor=0, **_kwargs):
-        return []
+        events = list(self.events)
+        self.events = []
+        return events
 
     def snapshot(self):
         return {
@@ -139,7 +142,7 @@ async def test_create_returns_before_worker_and_repeated_observations_stay_runni
 
 
 @pytest.mark.asyncio
-async def test_clean_worker_exit_converges_to_completed(tmp_path: Path):
+async def test_worker_exit_without_agent_end_is_interrupted(tmp_path: Path):
     FakeAdapter.instances.clear()
     registry = TaskRegistry(tmp_path / "tasks_v4.db")
     scheduler = TaskScheduler(
@@ -159,9 +162,39 @@ async def test_clean_worker_exit_converges_to_completed(tmp_path: Path):
 
     result = await service.poll(task_id)
 
+    assert result["status"] == TaskStatus.ORPHANED.value
+    assert registry.get_task(task_id).status is TaskStatus.ORPHANED
+    assert adapter.terminated is True
+
+    await service.shutdown()
+    await scheduler.shutdown()
+    registry.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_end_converges_to_completed(tmp_path: Path):
+    FakeAdapter.instances.clear()
+    registry = TaskRegistry(tmp_path / "tasks_v4.db")
+    scheduler = TaskScheduler(
+        registry,
+        workspace_root=tmp_path / "workspaces",
+        adapter_factory=FakeAdapter,
+        poll_interval_seconds=3600,
+    )
+    service = PiTaskService(registry, scheduler)
+
+    created = await service.create_task(owner_key="qq:1", session_origin="snowluma:FriendMessage:1", task="finish")
+    task_id = created["task_id"]
+    await asyncio.sleep(0)
+    adapter = FakeAdapter.instances[0]
+    adapter.events = [type("Event", (), {"type": "agent_end"})()]
+    adapter.is_running = False
+    adapter.returncode = 0
+
+    result = await service.poll(task_id)
+
     assert result["status"] == TaskStatus.COMPLETED.value
     assert registry.get_task(task_id).status is TaskStatus.COMPLETED
-    assert adapter.terminated is True
 
     await service.shutdown()
     await scheduler.shutdown()
