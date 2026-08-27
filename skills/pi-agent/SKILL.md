@@ -7,6 +7,8 @@ description: Use Pi as AstrBot's general-purpose Agent executor for code, script
 
 ## Core Role
 
+This plugin requires AstrBot's built-in Agent capability. Keep AI chat enabled, set the Agent runner to the local/built-in AstrBot Agent, and leave function/tool calling on. Third-party runners such as Dify, Coze, DashScope, or DeerFlow cannot dispatch `pi_agent`.
+
 Pi is AstrBot's general-purpose Agent executor and the default executor for tasks that are not extremely simple and purely conversational. It can handle code, scripts, research, automation, file operations, media/file handling, testing, tool-driven workflows, and other engineering or knowledge tasks.
 
 Use `pi_agent` by default whenever the task involves tools, files, external information, execution, validation, or non-trivial reasoning, even if the task may be completed quickly. Only very simple one-turn conversation, such as a basic explanation, translation, short rewrite, or casual reply with no tool/file work, should stay in AstrBot's own Agent.
@@ -30,7 +32,7 @@ Terminal wakeups are submitted through AstrBot's public event factory into the o
 3. When a later user turn requires Pi information, call `pi_task_list` or the known task tool. After each list/status/poll/search call, end the current tool loop; never chain polling calls in one turn.
 4. Call `pi_task_status` for control metadata without Pi content.
 5. Call `pi_task_poll` when AstrBot explicitly needs one short Pi state observation. It returns control metadata plus an unchanged native-session tail capped at 8,000 characters; it does not summarize or interpret Pi events.
-6. For keyword inspection, call `pi_session_search(session_id, keyword)` to receive matching native-session context capped at 8,000 characters. The plugin does not parse, summarize, classify, or rewrite it.
+6. For keyword inspection, call `pi_session_search(session_id, keyword)` to receive matching native-session context capped at 8,000 characters. The current `session_id` argument is the `task_id` returned by `pi_agent`; the plugin does not parse, summarize, classify, or rewrite it.
 7. Use `pi_task_follow_up`, `pi_task_resume`, `pi_task_cancel`, or `pi_task_delete` only when the user's request and permissions authorize changing the selected task.
 8. AstrBot decides whether to report progress, ask a clarification, continue waiting, provide a result, or take another management action.
 
@@ -42,7 +44,7 @@ The plugin does not create semantic progress summaries or automatically pause a 
 - `pi_task_list()`: List all registered async Pi tasks for AstrBot to select.
 - `pi_task_status(task_id: string)`: Read AstrBot task control metadata without Pi event content.
 - `pi_task_poll(task_id: string)`: Explicitly request one short Pi state observation and receive an unchanged native-session tail capped at 8,000 characters.
-- `pi_session_search(session_id: string, keyword: string)`: Search a native Pi session and return matching context capped at 8,000 characters.
+- `pi_session_search(session_id: string, keyword: string)`: Search a native Pi session using the `task_id` returned by `pi_agent` as `session_id`, and return matching context capped at 8,000 characters.
 - `pi_task_follow_up(task_id: string, message: string)`: Send an explicit additional requirement to the existing Pi session.
 - `pi_task_resume(task_id: string)`: Resume an existing task/session without rebuilding its original context.
 - `pi_task_cancel(task_id: string)`: Cancel a task while retaining its durable history.

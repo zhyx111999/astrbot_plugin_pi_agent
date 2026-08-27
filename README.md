@@ -4,6 +4,18 @@
 
 它解决的是 AstrBot Agent 会话不适合长时间占用的问题：主模型调用 `pi_agent` 后立即拿到 `task_id`，Pi 在独立进程和独立 session 中继续工作；主模型可以在后续回合通过任务工具读取对应的 native session，同时正常处理当前会话的其他消息。
 
+## 使用前提
+
+本插件依赖 AstrBot 内置 Agent 能力，不会在关闭 Agent / 工具调用时工作。安装和使用前必须满足：
+
+1. 在 WebUI `配置` -> `Agent 执行方式` 中启用 AI 对话，执行器选择 **内置 Agent**。不要改成 Dify、Coze、百炼或 DeerFlow。
+2. 保持函数工具 / 工具调用开启，不要关闭全部 LLM 工具。本插件通过 `pi_agent` 等 LLM 工具把任务交给后台 Pi。
+3. 当前聊天使用的模型必须支持 function calling / 工具调用。
+4. 当前声明并验证过的消息平台是 `aiocqhttp`（OneBot v11 / QQ）。
+5. AstrBot 版本必须满足 `>=4.27.1,<5`。
+
+未打开 AstrBot 内置 Agent 和工具调用时，插件可以加载，但主模型无法创建、检查或回传 Pi 任务。
+
 ## 重要行为
 
 - **不会等待 Pi 回合结束**：`pi_agent` 只创建任务、保存上下文并排队启动 worker，立即返回结构化结果。
@@ -50,11 +62,11 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 
 运行时依赖：
 
-- AstrBot `4.27.1` 或兼容的 `4.x` 版本，推荐使用 `4.27.1`。
+- AstrBot `>=4.27.1,<5`，推荐使用 `4.27.1`。插件元数据已声明该范围，不满足时会被 AstrBot 阻止加载。
 - Pi CLI `0.84.2`。
 - Node.js `22.19.0`，用于运行 Pi CLI。
 - 一个可用的 AstrBot OpenAI-compatible Provider/model binding。
-- Linux/WSL x64 是当前主要部署目标；插件也处理 Windows/WSL 路径格式。
+- 适配平台当前声明为 `aiocqhttp`（OneBot v11 / QQ）。Linux/WSL x64 是当前主要部署目标；插件也处理 Windows/WSL 路径格式。
 - AstrBot 自身的 Python 运行环境和网络访问能力。
 
 插件不修改 Pi 或 AstrBot 官方源码，也不内置或提交 Node/Pi 二进制。Pi CLI 必须由部署环境安装，并确保 AstrBot 服务进程能够执行 `pi --version`。MCP、AstrBot 工具自动继承和非 OpenAI-compatible Provider 不属于当前支持范围。
@@ -156,6 +168,13 @@ MCP 和 AstrBot 工具不会自动继承。`pi_mcp_config_paths` 必须保持空
 ## 恢复、保留和删除
 
 AstrBot 或插件重启时会恢复未终态任务：worker 已退出时，插件从 native session 启动新 worker 并继续执行；worker 仍存活但标准 stdin/stdout RPC 无法安全接管时，任务会标记为 `orphaned`，避免重复启动第二个写入进程，此时使用 `pi_task_resume` 显式恢复。删除操作会取消任务、删除当前 registry 元数据，并清理任务自己的 native session、工作区和 agent 配置目录。当前版本使用全新任务数据库，不读取旧版 registry。
+
+## 市场分类与兼容声明
+
+- 分类标签：`工具`、`外部集成`。
+- 市场分类：`integrations`（外部集成）。
+- 适配平台：`aiocqhttp`。
+- 支持版本：AstrBot `>=4.27.1,<5`。
 
 ## 作者与项目
 
