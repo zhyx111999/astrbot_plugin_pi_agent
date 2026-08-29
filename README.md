@@ -46,7 +46,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 
 主要模块：
 
-- `pi_agent_bridge/runtime.py`：WSL/Linux 安装后自动准备内置 runtime。优先解压 `runtime/vendor/pi-runtime-linux-x64.tar.xz`；归档缺失时从 GitHub Release 下载，解压后给 Node 加执行权限并删掉压缩包。仍没有可用包时回退 PATH / nvm。
+- `pi_agent_bridge/runtime.py`：WSL/Linux 安装后自动准备内置 runtime。优先解压 `runtime/vendor/pi-runtime-linux-x64.tar.xz`；归档缺失时从 GitHub Release 下载，直连失败后改走 AstrBot 同款镜像前缀，解压后给 Node 加执行权限并删掉压缩包。仍没有可用包时回退 PATH / nvm。
 - `pi_agent_bridge/rpc.py`：公开 Pi RPC 的 JSONL 读写、事件游标、steer、cancel、resume。
 - `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、session 路径、进程信息、任务所有者身份、原始回传会话、生命周期和 retention。
 - `pi_agent_bridge/scheduler.py`：并发限制、后台观察、worker 生命周期和重启接管。
@@ -63,12 +63,12 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 运行时依赖：
 
 - AstrBot `>=4.27.1,<5`，推荐使用 `4.27.1`。插件元数据已声明该范围，不满足时会被 AstrBot 阻止加载。
-- Linux/WSL x64 使用插件自带的 Node.js `22.19.0` 与 Pi CLI `0.84.2`：加载时自动解压，归档缺失则从 GitHub Release 下载，解压成功后删除压缩包以免双份占盘。原生 Windows 和 linux-arm64 没有这份内置包，才会回退宿主机 PATH / nvm 上的 `pi`。
+- Linux/WSL x64 使用插件自带的 Node.js `22.19.0` 与 Pi CLI `0.84.2`：加载时自动解压，归档缺失则从 GitHub Release 下载；直连失败后自动改走 AstrBot 同款 GitHub 镜像前缀，解压成功后删除压缩包以免双份占盘。原生 Windows 和 linux-arm64 没有这份内置包，才会回退宿主机 PATH / nvm 上的 `pi`。
 - 一个可用的 AstrBot OpenAI-compatible Provider/model binding。
 - 适配平台当前声明为 `aiocqhttp`（OneBot v11 / QQ）。Linux/WSL x64 是当前主要部署目标；插件也处理 Windows/WSL 路径格式。
 - AstrBot 自身的 Python 运行环境和网络访问能力。
 
-插件不修改 Pi 或 AstrBot 官方源码。linux-x64 运行所需的 Node/Pi 由插件自己准备，不要求部署环境预先安装 `pi`，也不要求 AstrBot 进程能在 PATH 里执行 `pi --version`。仓库 git 树通常不保存约 48MB 的压缩包，发布物在 GitHub Release Assets；插件加载时会自动下载并解压。MCP、AstrBot 工具自动继承和非 OpenAI-compatible Provider 不属于当前支持范围。
+插件不修改 Pi 或 AstrBot 官方源码。linux-x64 运行所需的 Node/Pi 由插件自己准备，不要求部署环境预先安装 `pi`，也不要求 AstrBot 进程能在 PATH 里执行 `pi --version`。仓库 git 树通常不保存约 48MB 的压缩包，发布物在 GitHub Release Assets；插件加载时会先直连下载，失败后再按 AstrBot 面板同款镜像前缀重试并解压。MCP、AstrBot 工具自动继承和非 OpenAI-compatible Provider 不属于当前支持范围。
 
 后台 Pi 使用 `pi_model` 选择的 AstrBot Provider/model 作为模型绑定，但不会自动继承该 Provider 的上下文、推理、输出、模态、采样、成本或兼容字段。Pi 的运行参数全部由以下插件配置项明确控制：`pi_thinking_level`、`pi_context_window`、`pi_max_output_tokens`、`pi_input_modalities`、`pi_temperature`、`pi_top_p`、`pi_top_k`、`pi_min_p` 和 `pi_sampling_params`。填写 0 或留空的数值字段不写入 Pi 配置，由 Pi 使用默认值；Provider 只提供 OpenAI-compatible 连接地址、鉴权和已选模型绑定。
 

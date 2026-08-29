@@ -13,14 +13,17 @@ The canonical extracted layout is::
 
 The vendor archive is the packaged payload. Plugin initialization unpacks it
 into the extracted layout automatically; resolve() repeats that check before
-launching a worker. Several flat ``pi-0.84.2`` and ``node-<platform>``
-variants remain accepted. When no bundled archive exists, a ``pi`` executable
-on PATH is the fallback.
+launching a worker. If the archive is missing, the plugin downloads it from
+the GitHub Release asset and, on failure, retries the same URL through the
+AstrBot GitHub mirror prefixes. Several flat ``pi-0.84.2`` and
+``node-<platform>`` variants remain accepted. When no bundled archive exists,
+a ``pi`` executable on PATH is the fallback.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import re
@@ -51,6 +54,24 @@ BUNDLED_RUNTIME_DOWNLOAD = (
     "https://github.com/zhyx111999/astrbot_plugin_pi_agent/releases/"
     "latest/download/pi-runtime-{platform_tag}.tar.xz"
 )
+GITHUB_RELEASE_MIRRORS = (
+    "https://edgeone.gh-proxy.com",
+    "https://hk.gh-proxy.com",
+    "https://gh-proxy.com",
+    "https://gh.dpik.top",
+)
+DOWNLOAD_TIMEOUT_SECONDS = 30
+logger = logging.getLogger(__name__)
+
+
+def release_archive_urls(platform_tag: str) -> tuple[str, ...]:
+    """Official GitHub Release URL first, then AstrBot-style ghproxy prefixes."""
+
+    official = BUNDLED_RUNTIME_DOWNLOAD.format(platform_tag=platform_tag)
+    return (
+        official,
+        *(f"{mirror.rstrip('/')}/{official}" for mirror in GITHUB_RELEASE_MIRRORS),
+    )
 
 
 class PiRuntimeError(RuntimeError):
@@ -247,24 +268,33 @@ class PiRuntimeAdapter:
     def _fetch_vendor_archive(self) -> Path | None:
         if not self.platform_tag.startswith("linux"):
             return None
-        url = BUNDLED_RUNTIME_DOWNLOAD.format(platform_tag=self.platform_tag)
         dest = self._vendor_archive()
         dest.parent.mkdir(parents=True, exist_ok=True)
+        for url in release_archive_urls(self.platform_tag):
+            if self._download_url_to(url, dest):
+                logger.info("Downloaded bundled Pi runtime from %s", url)
+                return dest
+            logger.warning("Failed to download bundled Pi runtime from %s", url)
+        return None
+
+    def _download_url_to(self, url: str, dest: Path) -> bool:
         partial = dest.with_name(dest.name + ".partial")
         try:
             request = urllib.request.Request(
                 url, headers={"User-Agent": "astrbot-plugin-pi-agent"}
             )
-            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as out:
+            with urllib.request.urlopen(
+                request, timeout=DOWNLOAD_TIMEOUT_SECONDS
+            ) as response, partial.open("wb") as out:
                 shutil.copyfileobj(response, out)
             if partial.stat().st_size < 32:
                 raise PiRuntimeUnavailable(f"Downloaded runtime archive is empty: {url}")
             partial.replace(dest)
-            return dest
+            return True
         except (OSError, urllib.error.URLError, PiRuntimeUnavailable):
             if partial.exists():
                 partial.unlink(missing_ok=True)
-            return None
+            return False
 
     def _extract_vendor_archive(self, archive: Path) -> None:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
@@ -453,6 +483,8 @@ def _is_arm64(machine: str) -> bool:
 __all__ = [
     "CommandPart",
     "ExecutableCommand",
+    "DOWNLOAD_TIMEOUT_SECONDS",
+    "GITHUB_RELEASE_MIRRORS",
     "NODE_VERSION",
     "PI_PACKAGE_NAME",
     "PI_VERSION",
@@ -462,4 +494,5 @@ __all__ = [
     "PiRuntimeResolution",
     "PiRuntimeUnavailable",
     "PiRuntimeVersionError",
+    "release_archive_urls",
 ]
