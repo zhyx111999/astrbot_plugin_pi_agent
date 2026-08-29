@@ -34,7 +34,7 @@ def _parse_simple_yaml(text: str) -> dict[str, object]:
 def test_plugin_metadata_declares_market_and_compatibility_fields() -> None:
     metadata = _parse_simple_yaml((ROOT / "metadata.yaml").read_text(encoding="utf-8"))
     assert metadata["name"] == "astrbot_plugin_pi_agent"
-    assert metadata["version"] == "v0.3.9"
+    assert metadata["version"] == "v0.3.10"
     assert metadata["author"] == "Yezi and Cz"
     assert metadata["astrbot_version"] == ">=4.27.1,<5"
     assert metadata["support_platforms"] == ["aiocqhttp"]

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .context import owner_user_id
+
 
 class NormalPipelineRelayError(RuntimeError):
     """The host cannot enqueue a synthetic normal-pipeline event."""
@@ -24,12 +26,27 @@ def _parse_session_origin(value: str) -> _SessionOrigin:
     return _SessionOrigin(*(part.strip() for part in parts))
 
 
+def wakeup_sender_id(session: _SessionOrigin, owner_key: str | None) -> str:
+    """Choose the synthetic event sender without changing message routing.
+
+    Private-chat outbound delivery uses the sender ID as the destination, so
+    FriendMessage wakeups keep ``session.session_id``. Group delivery uses
+    ``group_id``, so GroupMessage wakeups restore the task owner. Missing or
+    unparsable owner keys fall back to the session id.
+    """
+
+    if session.message_type == "GroupMessage":
+        return owner_user_id(owner_key, session.platform_id) or session.session_id
+    return session.session_id
+
+
 async def enqueue_task_wakeup(
     *,
     context: Any,
     session_origin: str,
     message: str,
     kind: str,
+    owner_key: str | None = None,
 ) -> None:
     """Submit a task update to AstrBot's normal event queue.
 
@@ -60,15 +77,8 @@ async def enqueue_task_wakeup(
         type=session.message_type,
         self_id="astrbot",
         session_id=session.session_id,
-        # AstrBot's aiocqhttp event sender is also used by the normal
-        # response adapter as the private-chat destination. Keep the original
-        # session user here; a synthetic sender ID would make event.send()
-        # target the non-numeric ``astrbot_pi_agent`` marker instead of the
-        # actual user. The callback marker belongs in raw_message, not in the
-        # visible sender identity; otherwise the model receives an internal
-        # looking user ID and may treat the wakeup as non-user-facing.
         sender=MessageMember(
-            user_id=session.session_id,
+            user_id=wakeup_sender_id(session, owner_key),
             nickname="用户",
         ),
         message=[Plain(message)],
@@ -95,6 +105,7 @@ async def enqueue_terminal_wakeup(
     context: Any,
     session_origin: str,
     message: str,
+    owner_key: str | None = None,
 ) -> None:
     """Submit a terminal task wakeup to AstrBot's normal event queue."""
 
@@ -103,6 +114,7 @@ async def enqueue_terminal_wakeup(
         session_origin=session_origin,
         message=message,
         kind="terminal_wakeup",
+        owner_key=owner_key,
     )
 
 
@@ -111,6 +123,7 @@ async def enqueue_progress_wakeup(
     context: Any,
     session_origin: str,
     message: str,
+    owner_key: str | None = None,
 ) -> None:
     """Submit a bounded intermediate task update to AstrBot's normal queue."""
 
@@ -119,6 +132,7 @@ async def enqueue_progress_wakeup(
         session_origin=session_origin,
         message=message,
         kind="progress_wakeup",
+        owner_key=owner_key,
     )
 
 
@@ -127,4 +141,5 @@ __all__ = [
     "enqueue_progress_wakeup",
     "enqueue_task_wakeup",
     "enqueue_terminal_wakeup",
+    "wakeup_sender_id",
 ]

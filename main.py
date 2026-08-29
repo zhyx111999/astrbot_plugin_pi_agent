@@ -272,6 +272,7 @@ class PiAgentPlugin(Star):
                 await enqueue_progress_wakeup(
                     context=self.context,
                     session_origin=task.session_origin,
+                    owner_key=task.owner_key,
                     message=_progress_wakeup_note(task.task_id, tail),
                 )
             except Exception:  # noqa: BLE001
@@ -307,6 +308,7 @@ class PiAgentPlugin(Star):
                     await enqueue_terminal_wakeup(
                         context=self.context,
                         session_origin=task.session_origin,
+                        owner_key=task.owner_key,
                         message=terminal_note(task, reason),
                     )
                     logger.info(
@@ -340,6 +342,7 @@ class PiAgentPlugin(Star):
                 await enqueue_terminal_wakeup(
                     context=self.context,
                     session_origin=task.session_origin,
+                    owner_key=task.owner_key,
                     message=terminal_note(task, reason),
                 )
             except ValueError as exc:

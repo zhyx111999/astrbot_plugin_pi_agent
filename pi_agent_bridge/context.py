@@ -39,6 +39,20 @@ def event_owner_key(event: Any) -> str:
     return origin
 
 
+def owner_user_id(owner_key: str | None, platform_id: str | None) -> str | None:
+    """Return the sender id stored in ``platform:sender`` owner keys."""
+
+    if not owner_key or not platform_id:
+        return None
+    prefix = f"{platform_id}:"
+    if not owner_key.startswith(prefix):
+        return None
+    rest = owner_key[len(prefix) :]
+    if not rest or ":" in rest:
+        return None
+    return rest
+
+
 def build_pi_prompt(task: str) -> str:
     """Build a Pi prompt from only the main model's refined task request."""
 
@@ -60,4 +74,9 @@ def _call(instance: Any, name: str, default: Any) -> Any:
         return default
 
 
-__all__ = ["build_pi_prompt", "event_owner_key", "event_session_origin"]
+__all__ = [
+    "build_pi_prompt",
+    "event_owner_key",
+    "event_session_origin",
+    "owner_user_id",
+]

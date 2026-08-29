@@ -189,6 +189,83 @@ async def test_terminal_wakeup_uses_original_private_sender(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_group_wakeup_uses_task_owner_as_sender(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    class StarTools:
+        @staticmethod
+        async def create_message(**kwargs):
+            calls.append(("message", kwargs))
+            return "synthetic-event"
+
+        @staticmethod
+        async def create_event(event, **kwargs):
+            calls.append(("event", {"event": event, **kwargs}))
+
+    message_components = types.ModuleType("astrbot.api.message_components")
+    message_components.Plain = _Plain
+    platform = types.ModuleType("astrbot.api.platform")
+    platform.MessageMember = _Member
+    star = types.ModuleType("astrbot.api.star")
+    star.StarTools = StarTools
+    for name, module in {
+        "astrbot.api.message_components": message_components,
+        "astrbot.api.platform": platform,
+        "astrbot.api.star": star,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    await enqueue_terminal_wakeup(
+        context=object(),
+        session_origin="snowluma:GroupMessage:1081117579",
+        owner_key="snowluma:3268514224",
+        message="terminal wake metadata",
+    )
+
+    assert calls[0][1]["sender"].user_id == "3268514224"
+    assert calls[0][1]["group_id"] == "1081117579"
+    assert calls[0][1]["session_id"] == "1081117579"
+
+
+@pytest.mark.asyncio
+async def test_private_wakeup_keeps_session_user_as_sender(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    class StarTools:
+        @staticmethod
+        async def create_message(**kwargs):
+            calls.append(("message", kwargs))
+            return "synthetic-event"
+
+        @staticmethod
+        async def create_event(event, **kwargs):
+            calls.append(("event", {"event": event, **kwargs}))
+
+    message_components = types.ModuleType("astrbot.api.message_components")
+    message_components.Plain = _Plain
+    platform = types.ModuleType("astrbot.api.platform")
+    platform.MessageMember = _Member
+    star = types.ModuleType("astrbot.api.star")
+    star.StarTools = StarTools
+    for name, module in {
+        "astrbot.api.message_components": message_components,
+        "astrbot.api.platform": platform,
+        "astrbot.api.star": star,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    await enqueue_terminal_wakeup(
+        context=object(),
+        session_origin="snowluma:FriendMessage:3268514224",
+        owner_key="snowluma:999",
+        message="terminal wake metadata",
+    )
+
+    assert calls[0][1]["sender"].user_id == "3268514224"
+    assert calls[0][1]["group_id"] == ""
+
+
+@pytest.mark.asyncio
 async def test_terminal_wakeup_rejects_invalid_session(monkeypatch):
     message_components = types.ModuleType("astrbot.api.message_components")
     message_components.Plain = _Plain
