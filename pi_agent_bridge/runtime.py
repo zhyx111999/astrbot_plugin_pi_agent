@@ -4,19 +4,17 @@ The bridge launches Pi through its public CLI/RPC interface.  This module only
 selects an argv prefix for that process; it neither patches the bundled Pi code
 nor shells out while resolving a runtime.
 
-The canonical packaged layout is::
+The canonical extracted layout is::
 
     runtime/
-      node/
-        linux-x64/bin/node
-        win-x64/node.exe
-      pi/0.84.2/
-        node_modules/@earendil-works/pi-coding-agent/dist/cli.js
-        node_modules/@earendil-works/pi-coding-agent/package.json
+      vendor/pi-runtime-linux-x64.tar.xz
+      node/linux-x64/bin/node
+      pi/0.84.2/node_modules/@earendil-works/pi-coding-agent/dist/cli.js
 
-Several flat ``pi-0.84.2`` and ``node-<platform>`` variants are accepted to
-keep archive extraction platform-neutral.  When no bundled runtime exists, a
-normal ``pi`` executable on ``PATH`` remains a deliberate fallback.
+The vendor archive is the packaged payload. Missing extracted files are
+materialized from that archive on first resolve. Several flat
+``pi-0.84.2`` and ``node-<platform>`` variants remain accepted. When no
+bundled runtime exists, a ``pi`` executable on PATH is the fallback.
 """
 
 from __future__ import annotations
@@ -26,6 +24,8 @@ import os
 import platform
 import re
 import shutil
+import tarfile
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +42,8 @@ Which = Callable[..., str | None]
 
 _WINDOWS_PATH = re.compile(r"^(?P<drive>[a-zA-Z]):[\\/]*(?P<tail>.*)$")
 _WSL_PATH = re.compile(r"^/mnt/(?P<drive>[a-zA-Z])(?:/(?P<tail>.*))?$")
+_EXTRACT_LOCK = threading.Lock()
+VENDOR_ARCHIVE_NAME = "pi-runtime-{platform_tag}.tar.xz"
 
 
 class PiRuntimeError(RuntimeError):
@@ -131,6 +133,7 @@ class PiRuntimeAdapter:
                 pi_version=None,
             )
 
+        self._ensure_vendor_extracted()
         bundled = self._resolve_bundled()
         if bundled is not None:
             return bundled
@@ -183,6 +186,38 @@ class PiRuntimeAdapter:
                 base = f"{wsl.group('drive').upper()}:\\"
                 return f"{base}{tail}" if tail else base
         return value
+
+    def _vendor_archive(self) -> Path:
+        return self.runtime_root / "vendor" / VENDOR_ARCHIVE_NAME.format(
+            platform_tag=self.platform_tag
+        )
+
+    def _ensure_vendor_extracted(self) -> None:
+        """Materialize the bundled archive into the canonical runtime layout."""
+
+        if self.configured_command is not None:
+            return
+        node = _first_existing_file(self._node_candidates())
+        cli = _first_existing_file(self._cli_candidates())
+        if node is not None and cli is not None:
+            return
+        archive = self._vendor_archive()
+        if not archive.is_file():
+            return
+        with _EXTRACT_LOCK:
+            node = _first_existing_file(self._node_candidates())
+            cli = _first_existing_file(self._cli_candidates())
+            if node is not None and cli is not None:
+                return
+            self._extract_vendor_archive(archive)
+
+    def _extract_vendor_archive(self, archive: Path) -> None:
+        self.runtime_root.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive, "r:xz") as bundle:
+            try:
+                bundle.extractall(self.runtime_root, filter="data")
+            except TypeError:
+                bundle.extractall(self.runtime_root)
 
     def _resolve_bundled(self) -> PiRuntimeResolution | None:
         node = _first_existing_file(self._node_candidates())
@@ -348,6 +383,7 @@ __all__ = [
     "NODE_VERSION",
     "PI_PACKAGE_NAME",
     "PI_VERSION",
+    "VENDOR_ARCHIVE_NAME",
     "PiRuntimeAdapter",
     "PiRuntimeError",
     "PiRuntimeResolution",

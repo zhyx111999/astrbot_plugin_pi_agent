@@ -2,7 +2,7 @@ name: astrbot_plugin_pi_agent
 display_name: Pi Agent
 short_desc: 将本地 Pi 作为 AstrBot 后台 Agent 执行器
 desc: Yezi 与 Cz 维护的开源 AstrBot Pi Agent 插件，支持独立后台任务、原生会话读取、任务恢复和普通回复链路终态处理。使用前必须启用 AstrBot 内置 Agent 与工具调用。
-version: v0.3.6
+version: v0.3.7
 author: Yezi and Cz
 repo: https://github.com/zhyx111999/astrbot_plugin_pi_agent
 astrbot_version: ">=4.27.1,<5"

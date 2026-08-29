@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -53,6 +55,47 @@ def test_bundled_runtime_prefers_fixed_node_and_pi_cli(tmp_path: Path):
     assert resolution.source == "bundled"
     assert resolution.pi_version == PI_VERSION
     assert resolution.command == (str(node.resolve()), str(cli.resolve()))
+
+
+def test_vendor_archive_is_extracted_into_canonical_layout(tmp_path: Path):
+    runtime = tmp_path / "runtime"
+    vendor = runtime / "vendor"
+    vendor.mkdir(parents=True)
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w:xz") as bundle:
+        node_bytes = b"#!/bin/node\n"
+        node_info = tarfile.TarInfo("node/linux-x64/bin/node")
+        node_info.size = len(node_bytes)
+        bundle.addfile(node_info, io.BytesIO(node_bytes))
+        cli_bytes = b"cli"
+        cli_info = tarfile.TarInfo(
+            "pi/0.84.2/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+        )
+        cli_info.size = len(cli_bytes)
+        bundle.addfile(cli_info, io.BytesIO(cli_bytes))
+        manifest = json.dumps(
+            {"name": PI_PACKAGE_NAME, "version": PI_VERSION}
+        ).encode()
+        manifest_info = tarfile.TarInfo(
+            "pi/0.84.2/node_modules/@earendil-works/pi-coding-agent/package.json"
+        )
+        manifest_info.size = len(manifest)
+        bundle.addfile(manifest_info, io.BytesIO(manifest))
+    (vendor / "pi-runtime-linux-x64.tar.xz").write_bytes(payload.getvalue())
+
+    adapter = PiRuntimeAdapter(
+        runtime_root=runtime,
+        platform_name="Linux",
+        machine="x86_64",
+        is_wsl=False,
+        which=lambda *_args, **_kwargs: None,
+    )
+    resolution = adapter.resolve()
+
+    assert resolution.source == "bundled"
+    assert resolution.pi_version == PI_VERSION
+    assert Path(resolution.command[0]).name == "node"
+    assert Path(resolution.command[1]).name == "cli.js"
 
 
 def test_path_fallback_when_no_bundled_runtime(tmp_path: Path):

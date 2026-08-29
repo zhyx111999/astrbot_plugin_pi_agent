@@ -46,7 +46,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 
 主要模块：
 
-- `pi_agent_bridge/runtime.py`：固定选择插件内置 Node `22.19.0` / Pi `0.84.2` runtime，不向用户暴露可执行文件路径覆盖配置。
+- `pi_agent_bridge/runtime.py`：优先使用插件内置 linux-x64 Node `22.19.0` / Pi `0.84.2` runtime（`runtime/vendor/pi-runtime-linux-x64.tar.xz`，首次解析时解压）；没有内置包时回退到宿主机 PATH / nvm 的 `pi`。
 - `pi_agent_bridge/rpc.py`：公开 Pi RPC 的 JSONL 读写、事件游标、steer、cancel、resume。
 - `pi_agent_bridge/registry.py`：SQLite WAL 任务状态、session 路径、进程信息、任务所有者身份、原始回传会话、生命周期和 retention。
 - `pi_agent_bridge/scheduler.py`：并发限制、后台观察、worker 生命周期和重启接管。
@@ -63,8 +63,7 @@ TaskScheduler ── PiRpcAdapter ── Pi worker（一个任务一个进程/se
 运行时依赖：
 
 - AstrBot `>=4.27.1,<5`，推荐使用 `4.27.1`。插件元数据已声明该范围，不满足时会被 AstrBot 阻止加载。
-- Pi CLI `0.84.2`。
-- Node.js `22.19.0`，用于运行 Pi CLI。
+- 插件内置 linux-x64 Pi CLI `0.84.2` 与 Node.js `22.19.0`；其他平台需在宿主机安装同版本 `pi`。
 - 一个可用的 AstrBot OpenAI-compatible Provider/model binding。
 - 适配平台当前声明为 `aiocqhttp`（OneBot v11 / QQ）。Linux/WSL x64 是当前主要部署目标；插件也处理 Windows/WSL 路径格式。
 - AstrBot 自身的 Python 运行环境和网络访问能力。

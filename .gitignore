@@ -219,5 +219,9 @@ data/
 /.pi/agents/
 /.pi/artifacts/
 
+# Extracted bundled Pi/Node payload. Keep runtime/vendor archives tracked.
+/runtime/node/
+/runtime/pi/
+
 # Codegraph index
 .codegraph/
