@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 
@@ -90,12 +91,77 @@ def test_vendor_archive_is_extracted_into_canonical_layout(tmp_path: Path):
         is_wsl=False,
         which=lambda *_args, **_kwargs: None,
     )
+    assert adapter.install_bundled_runtime() is True
     resolution = adapter.resolve()
 
     assert resolution.source == "bundled"
     assert resolution.pi_version == PI_VERSION
     assert Path(resolution.command[0]).name == "node"
     assert Path(resolution.command[1]).name == "cli.js"
+    assert not (vendor / "pi-runtime-linux-x64.tar.xz").exists()
+
+
+def test_install_downloads_vendor_archive_when_missing(tmp_path: Path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w:xz") as bundle:
+        node_bytes = b"#!/bin/node\n"
+        node_info = tarfile.TarInfo("node/linux-x64/bin/node")
+        node_info.mode = 0o644
+        node_info.size = len(node_bytes)
+        bundle.addfile(node_info, io.BytesIO(node_bytes))
+        cli_bytes = b"cli"
+        cli_info = tarfile.TarInfo(
+            "pi/0.84.2/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+        )
+        cli_info.size = len(cli_bytes)
+        bundle.addfile(cli_info, io.BytesIO(cli_bytes))
+        manifest = json.dumps(
+            {"name": PI_PACKAGE_NAME, "version": PI_VERSION}
+        ).encode()
+        manifest_info = tarfile.TarInfo(
+            "pi/0.84.2/node_modules/@earendil-works/pi-coding-agent/package.json"
+        )
+        manifest_info.size = len(manifest)
+        bundle.addfile(manifest_info, io.BytesIO(manifest))
+    archive_bytes = payload.getvalue()
+
+    class _Response:
+        def __enter__(self):
+            return io.BytesIO(archive_bytes)
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "pi_agent_bridge.runtime.urllib.request.urlopen",
+        lambda *_args, **_kwargs: _Response(),
+    )
+    adapter = PiRuntimeAdapter(
+        runtime_root=runtime,
+        platform_name="Linux",
+        machine="x86_64",
+        is_wsl=True,
+        which=lambda *_args, **_kwargs: None,
+    )
+
+    assert adapter.install_bundled_runtime(allow_download=True) is True
+    node = runtime / "node" / "linux-x64" / "bin" / "node"
+    assert node.is_file()
+    if os.name != "nt":
+        assert node.stat().st_mode & 0o111
+    assert not (runtime / "vendor" / "pi-runtime-linux-x64.tar.xz").exists()
+
+
+def test_install_without_archive_or_download_returns_false(tmp_path: Path):
+    adapter = PiRuntimeAdapter(
+        runtime_root=tmp_path / "runtime",
+        platform_name="Linux",
+        machine="x86_64",
+        is_wsl=True,
+        which=lambda *_args, **_kwargs: None,
+    )
+    assert adapter.install_bundled_runtime(allow_download=False) is False
 
 
 def test_path_fallback_when_no_bundled_runtime(tmp_path: Path):

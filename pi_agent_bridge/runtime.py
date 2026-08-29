@@ -11,10 +11,11 @@ The canonical extracted layout is::
       node/linux-x64/bin/node
       pi/0.84.2/node_modules/@earendil-works/pi-coding-agent/dist/cli.js
 
-The vendor archive is the packaged payload. Missing extracted files are
-materialized from that archive on first resolve. Several flat
-``pi-0.84.2`` and ``node-<platform>`` variants remain accepted. When no
-bundled runtime exists, a ``pi`` executable on PATH is the fallback.
+The vendor archive is the packaged payload. Plugin initialization unpacks it
+into the extracted layout automatically; resolve() repeats that check before
+launching a worker. Several flat ``pi-0.84.2`` and ``node-<platform>``
+variants remain accepted. When no bundled archive exists, a ``pi`` executable
+on PATH is the fallback.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ import re
 import shutil
 import tarfile
 import threading
+import urllib.error
+import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +47,10 @@ _WINDOWS_PATH = re.compile(r"^(?P<drive>[a-zA-Z]):[\\/]*(?P<tail>.*)$")
 _WSL_PATH = re.compile(r"^/mnt/(?P<drive>[a-zA-Z])(?:/(?P<tail>.*))?$")
 _EXTRACT_LOCK = threading.Lock()
 VENDOR_ARCHIVE_NAME = "pi-runtime-{platform_tag}.tar.xz"
+BUNDLED_RUNTIME_DOWNLOAD = (
+    "https://github.com/zhyx111999/astrbot_plugin_pi_agent/releases/"
+    "latest/download/pi-runtime-{platform_tag}.tar.xz"
+)
 
 
 class PiRuntimeError(RuntimeError):
@@ -192,24 +199,72 @@ class PiRuntimeAdapter:
             platform_tag=self.platform_tag
         )
 
-    def _ensure_vendor_extracted(self) -> None:
-        """Materialize the bundled archive into the canonical runtime layout."""
+    def bundled_runtime_ready(self) -> bool:
+        """Return whether the extracted Node binary and Pi CLI are both present."""
 
-        if self.configured_command is not None:
-            return
-        node = _first_existing_file(self._node_candidates())
-        cli = _first_existing_file(self._cli_candidates())
-        if node is not None and cli is not None:
+        return (
+            _first_existing_file(self._node_candidates()) is not None
+            and _first_existing_file(self._cli_candidates()) is not None
+        )
+
+    def install_bundled_runtime(self, *, allow_download: bool = True) -> bool:
+        """Unpack the vendor archive after plugin install, then drop it.
+
+        On WSL/Linux this is the install path: find or download the compressed
+        linux-x64 archive, extract Node/Pi, mark the Node binary executable,
+        then delete the archive so disk does not keep both copies.
+        """
+
+        with _EXTRACT_LOCK:
+            if self.configured_command is not None:
+                return False
+            if not self.bundled_runtime_ready():
+                archive = self._vendor_archive()
+                if not archive.is_file() and allow_download:
+                    archive = self._fetch_vendor_archive() or archive
+                if archive.is_file():
+                    self._extract_vendor_archive(archive)
+            self._chmod_extracted_node()
+            ready = self.bundled_runtime_ready()
+            if ready:
+                self._discard_vendor_archives()
+            return ready
+
+    def _ensure_vendor_extracted(self) -> None:
+        """Materialize a local vendor archive before launching a worker."""
+
+        if self.configured_command is not None or self.bundled_runtime_ready():
             return
         archive = self._vendor_archive()
         if not archive.is_file():
             return
         with _EXTRACT_LOCK:
-            node = _first_existing_file(self._node_candidates())
-            cli = _first_existing_file(self._cli_candidates())
-            if node is not None and cli is not None:
+            if self.bundled_runtime_ready():
                 return
             self._extract_vendor_archive(archive)
+            self._chmod_extracted_node()
+
+    def _fetch_vendor_archive(self) -> Path | None:
+        if not self.platform_tag.startswith("linux"):
+            return None
+        url = BUNDLED_RUNTIME_DOWNLOAD.format(platform_tag=self.platform_tag)
+        dest = self._vendor_archive()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        partial = dest.with_name(dest.name + ".partial")
+        try:
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "astrbot-plugin-pi-agent"}
+            )
+            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as out:
+                shutil.copyfileobj(response, out)
+            if partial.stat().st_size < 32:
+                raise PiRuntimeUnavailable(f"Downloaded runtime archive is empty: {url}")
+            partial.replace(dest)
+            return dest
+        except (OSError, urllib.error.URLError, PiRuntimeUnavailable):
+            if partial.exists():
+                partial.unlink(missing_ok=True)
+            return None
 
     def _extract_vendor_archive(self, archive: Path) -> None:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
@@ -218,6 +273,24 @@ class PiRuntimeAdapter:
                 bundle.extractall(self.runtime_root, filter="data")
             except TypeError:
                 bundle.extractall(self.runtime_root)
+
+    def _chmod_extracted_node(self) -> None:
+        if self.is_windows:
+            return
+        for candidate in self._node_candidates():
+            if candidate.is_file():
+                candidate.chmod(candidate.stat().st_mode | 0o111)
+
+    def _discard_vendor_archives(self) -> None:
+        vendor = self.runtime_root / "vendor"
+        if not vendor.is_dir():
+            return
+        for path in vendor.iterdir():
+            if path.is_file() and path.suffix.lower() in {".xz", ".tgz", ".gz"}:
+                try:
+                    path.unlink()
+                except OSError:
+                    continue
 
     def _resolve_bundled(self) -> PiRuntimeResolution | None:
         node = _first_existing_file(self._node_candidates())

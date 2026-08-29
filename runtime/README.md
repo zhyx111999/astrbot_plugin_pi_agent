@@ -1,9 +1,11 @@
 # Bundled Pi runtime
 
-This directory holds the plugin-owned Node `22.19.0` / Pi `0.84.2` payload.
+The install payload is a compressed linux-x64 archive:
 
-- `vendor/pi-runtime-linux-x64.tar.xz` is the packaged linux-x64 runtime.
-- `node/` and `pi/` are the extracted layout used at process launch.
-- If the extracted files are missing, `pi_agent_bridge.runtime` unpacks the vendor archive on first resolve.
+```text
+runtime/vendor/pi-runtime-linux-x64.tar.xz
+```
 
-Current payload is linux-x64 only. Other hosts still use the PATH / nvm fallback.
+When the plugin loads, it unpacks Node `22.19.0` and Pi `0.84.2` into `node/` and `pi/`, then deletes the archive so disk does not keep both copies. Other hosts still use the PATH / nvm fallback.
+
+If the archive is missing from a checkout, download `pi-runtime-linux-x64.tar.xz` from the GitHub Release assets into `runtime/vendor/` and reload the plugin.

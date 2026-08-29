@@ -108,6 +108,14 @@ class PiAgentPlugin(Star):
 
     async def initialize(self):
         """Async initialization hook called after the Star is instantiated."""
+        try:
+            runtime = PiRuntimeAdapter(plugin_root=Path(__file__).parent)
+            if runtime.install_bundled_runtime():
+                logger.info("Bundled Pi runtime is unpacked")
+            else:
+                logger.info("Bundled Pi archive not found; PATH fallback remains available")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to unpack bundled Pi runtime")
         if self._config_bool("enable_async_tasks", True):
             await self._ensure_task_service()
         logger.info("PiAgent plugin initialized.")
